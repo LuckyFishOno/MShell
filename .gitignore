@@ -1,0 +1,31 @@
+# Local research, diagnostics, and agent workspace configuration
+/analysis/
+/.agent-memory/
+/.agents/
+/.claude/
+/.trail/
+/AGENTS.md
+/CLAUDE.md
+.carve-check/
+/analysis-app/MShell/SKELETON.md
+/analysis-app/MShell/carve-skeleton.json
+
+# SwiftPM, Xcode, and app build output
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+build/
+*.app/
+*.dmg
+
+# Machine and connection data
+.DS_Store
+.env
+.env.*
+sessions.json
+known-hosts.json
+password-vault.json
+appearance.json
+*.pem
+*.key
