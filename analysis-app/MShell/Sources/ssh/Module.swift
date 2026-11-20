@@ -119,18 +119,18 @@ final class AuthWatcher: ChannelInboundHandler, @unchecked Sendable {
         promise.fail(error)
     }
     func handlerRemoved(context: ChannelHandlerContext) {
-        failIfPending(SSHError.authenticationFailed)
+        failIfPending(SSHError.connectFailed("SSH connection closed during authentication"))
     }
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if event is UserAuthSuccessEvent, !settled { settled = true; timeout?.cancel(); promise.succeed(()) }
         context.fireUserInboundEventTriggered(event)
     }
     func channelInactive(context: ChannelHandlerContext) {
-        if !settled { settled = true; timeout?.cancel(); promise.fail(SSHError.authenticationFailed) }
+        failIfPending(SSHError.connectFailed("SSH connection closed during authentication"))
         context.fireChannelInactive()
     }
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        if !settled { settled = true; timeout?.cancel(); promise.fail(SSHError.connectFailed(String(describing: error))) }
+        failIfPending((error as? SSHError) ?? SSHError.connectFailed(String(describing: error)))
         context.close(promise: nil)
     }
 }

@@ -22,6 +22,13 @@ import Ssh
             await connect.value; XCTAssertTrue(tab.connected)
             await model.startTerminal(tab); XCTAssertTrue(tab.terminalReady)
             try await wait(tab, contains: "READY>")
+            let command = QuickCommand(name: "Print working directory", text: "pwd")
+            let request = try XCTUnwrap(model.prepareQuickCommand(command, for: tab))
+            tab.showsFiles = true
+            XCTAssertFalse(model.sendQuickCommand(request, run: true))
+            tab.showsFiles = false
+            XCTAssertTrue(model.sendQuickCommand(request, run: true))
+            try await wait(tab, contains: "/initial")
             for byte in Array("cd child\rpwd\r".utf8) { model.sendTerminal(tab, bytes: [byte]) }
             try await wait(tab, contains: "/initial/child")
             model.sendTerminal(tab, bytes: Array("echo \u{4f60}\u{597d}\r".utf8)); try await wait(tab, contains: "\u{4f60}\u{597d}")

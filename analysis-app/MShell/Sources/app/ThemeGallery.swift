@@ -48,27 +48,100 @@ extension WorkspaceTheme {
                background: "EAF1F7", foreground: "263442", cursor: "12627C", selection: "C1DCE8",
               ansi: ["253440", "A32C46", "236649", "765618", "204F8D", "713E84", "186377", "485A67",
                      "556777", "A6324D", "286748", "795718", "26599A", "774391", "1C687A", "34495A"])
+    ] + linuxPresets
+
+    private static let tango = ["2E3436", "CC0000", "4E9A06", "C4A000", "3465A4", "75507B", "06989A", "D3D7CF",
+                                "555753", "EF2929", "8AE234", "FCE94F", "729FCF", "AD7FA8", "34E2E2", "EEEEEC"]
+
+    /// Default terminal palettes of Linux distributions and desktops. Terminal colors are taken from the
+    /// sources in THEME-INVENTORY.md; window chrome colors are derived to match each palette.
+    static let linuxPresets: [WorkspaceTheme] = [
+        // GNOME Terminal Ubuntu profile: Tango on aubergine (Ubuntu 25.04 and earlier).
+        preset("ubuntu", "Ubuntu", appearance: "dark", chrome: ["2C001E", "3B0F2F", "411534", "35092A", "E95420", "5E2750"],
+               background: "300A24", foreground: "EEEEEC", cursor: "EEEEEC", selection: "6A3159", ansi: tango),
+        // QTerminal Kali-Dark.
+        preset("kali-dark", "Kali Dark", appearance: "dark", chrome: ["1F2229", "272A34", "2C303B", "242730", "367BF0", "3B4050"],
+               background: "23252E", foreground: "FFFFFF", cursor: "B4D5FF", selection: "2F4A78",
+               ansi: ["1F2229", "D41919", "5EBDAD", "FEA44C", "367BF0", "9755B3", "49AEE6", "E6E6E6",
+                      "198388", "EC0101", "47D4B9", "FF8A18", "277FFF", "962AC3", "05A1F7", "FFFFFF"]),
+        // Ptyxis GNOME palette (Fedora Workstation, RHEL and other GNOME desktops).
+        preset("gnome-dark", "GNOME Dark", appearance: "dark", chrome: ["1C1C1F", "2E2E32", "2E2E32", "242428", "3584E4", "3A3A40"],
+               background: "1C1C1F", foreground: "FFFFFF", cursor: "FFFFFF", selection: "1B4A80",
+               ansi: ["241F31", "C01C28", "2EC27E", "F5C211", "1E78E4", "9841BB", "0AB9DC", "C0BFBC",
+                      "5E5C64", "ED333B", "57E389", "F8E45C", "51A1FF", "C061CB", "4FD2FD", "F6F5F4"]),
+        preset("gnome-light", "GNOME Light", appearance: "light", chrome: ["FFFFFF", "EBEBED", "FFFFFF", "F3F3F5", "3584E4", "D7D7DB"],
+               background: "FFFFFF", foreground: "1D1D20", cursor: "1D1D20", selection: "C0D8F6",
+               ansi: ["1D1D20", "C01C28", "26A269", "A2734C", "12488B", "A347BA", "2AA1B3", "CFCFCF",
+                      "5D5D5D", "F66151", "33D17A", "E9AD0C", "2A7BDE", "C061CB", "33C7DE", "FFFFFF"]),
+        // Konsole Breeze (KDE Plasma distributions).
+        preset("breeze", "Breeze", appearance: "dark", chrome: ["232627", "2A2E32", "31363B", "2A2E32", "3DAEE9", "4D5157"],
+               background: "232627", foreground: "FCFCFC", cursor: "FCFCFC", selection: "1D5578",
+               ansi: ["232627", "ED1515", "11D116", "F67400", "1D99F3", "9B59B6", "1ABC9C", "FCFCFC",
+                      "7F8C8D", "C0392B", "1CDC9A", "FDBC4B", "3DAEE9", "8E44AD", "16A085", "FFFFFF"]),
+        // Classic GNOME Terminal Tango, used by older Debian, Fedora and CentOS releases.
+        preset("tango", "Tango", appearance: "dark", chrome: ["1E2224", "2E3436", "393F41", "262B2D", "729FCF", "4A5153"],
+               background: "000000", foreground: "D3D7CF", cursor: "D3D7CF", selection: "204A87",
+               ansi: ["000000"] + tango.dropFirst()),
+        // Linux kernel virtual console (drivers/tty/vt/vt.c default palette).
+        preset("linux-console", "Linux Console", appearance: "dark", chrome: ["000000", "0C0C0C", "141414", "080808", "00AAAA", "2A2A2A"],
+               background: "000000", foreground: "AAAAAA", cursor: "AAAAAA", selection: "0000AA",
+               ansi: ["000000", "AA0000", "00AA00", "AA5500", "0000AA", "AA00AA", "00AAAA", "AAAAAA",
+                      "555555", "FF5555", "55FF55", "FFFF55", "5555FF", "FF55FF", "55FFFF", "FFFFFF"])
     ]
 
+}
+
+enum ThemeSearch {
+    /// Keeps themes in catalog order whose original or translated title matches every search term.
+    static func filter(_ themes: [WorkspaceTheme], matching query: String) -> [WorkspaceTheme] {
+        let terms = query.split(whereSeparator: \.isWhitespace)
+        return themes.filter { theme in
+            terms.allSatisfy { term in [theme.title, T(theme.title)].contains { $0.localizedCaseInsensitiveContains(term) } }
+        }
+    }
 }
 
 struct ThemeGallery: View {
     let themes: [WorkspaceTheme]
     let selectedID: String
     let select: (String) -> Void
+    @State private var query = ""
 
     var body: some View {
-        ScrollViewReader { scroll in
-            ScrollView {
-                LazyVStack(spacing: 4) {
-                    ForEach(themes) { theme in
-                        row(theme).id(theme.id)
-                    }
+        let matching = ThemeSearch.filter(themes, matching: query)
+        VStack(spacing: 6) {
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(.secondary)
+                TextField(T("Search themes"), text: $query)
+                    .textFieldStyle(.plain).font(.system(size: 12))
+                    .accessibilityIdentifier("themeSearch")
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .accessibilityLabel(T("Clear search"))
                 }
-                .padding(.vertical, 2)
             }
-            .defaultScrollAnchor(.top)
-            .onAppear { scroll.scrollTo(selectedID, anchor: .center) }
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+            ScrollViewReader { scroll in
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(matching) { theme in
+                            row(theme).id(theme.id)
+                        }
+                        if matching.isEmpty {
+                            Text(T("No matching themes")).font(.caption).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .defaultScrollAnchor(.top)
+                .onAppear {
+                    // Lazy rows are laid out after the first pass, so scroll once layout has run.
+                    DispatchQueue.main.async { scroll.scrollTo(selectedID, anchor: .center) }
+                }
+            }
         }
         .accessibilityIdentifier("themePicker")
     }

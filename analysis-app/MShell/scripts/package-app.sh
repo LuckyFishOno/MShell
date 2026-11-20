@@ -4,11 +4,13 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_path=${1:-/tmp/mshell-build}
 output_dir=${2:-"$project_dir/../build"}
 cd "$project_dir"
-swift build --build-path "$build_path" --product CarveApp
-bin_dir=$(swift build --build-path "$build_path" --show-bin-path)
+# Release builds draw and parse terminal output several times faster than debug builds.
+swift build -c release --build-path "$build_path" --product CarveApp
+bin_dir=$(swift build -c release --build-path "$build_path" --show-bin-path)
 app="$output_dir/MShell.app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/bin"
 cp "$bin_dir/CarveApp" "$app/Contents/MacOS/MShell"
+ln -sf ../../MacOS/MShell "$app/Contents/Resources/bin/mshell"
 for resource in "$bin_dir"/*.bundle; do
     [ -d "$resource" ] || continue
     ditto "$resource" "$app/Contents/Resources/$(basename "$resource")"
@@ -22,8 +24,8 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>MShell</string>
 <key>CFBundleExecutable</key><string>MShell</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.7.0</string>
-<key>CFBundleVersion</key><string>10</string>
+<key>CFBundleShortVersionString</key><string>0.9.2</string>
+<key>CFBundleVersion</key><string>14</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>

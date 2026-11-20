@@ -27,5 +27,7 @@ sessions.json
 known-hosts.json
 password-vault.json
 appearance.json
+quick-commands.json
+layout.json
 *.pem
 *.key

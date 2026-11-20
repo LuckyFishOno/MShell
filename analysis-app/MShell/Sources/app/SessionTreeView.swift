@@ -66,21 +66,22 @@ struct SessionTreeView: View {
         AnyView(VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 if item.isFolder {
-                    Button { perform { try store.setExpanded(item.id, !item.expanded) } } label: {
-                        Image(systemName: item.expanded || !store.query.isEmpty ? "chevron.down" : "chevron.right").font(.caption2).frame(width: 12)
-                    }.buttonStyle(.plain).disabled(!store.query.isEmpty)
-                } else { Color.clear.frame(width: 12, height: 12) }
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(item.expanded || !store.query.isEmpty ? 90 : 0))
+                        .frame(width: 14, height: 14)
+                } else { Color.clear.frame(width: 14, height: 14) }
                 Image(systemName: item.isFolder ? "folder.fill" : "terminal").foregroundStyle(item.isFolder ? .orange : .secondary)
                 Text(item.name).lineLimit(1)
                 Spacer(minLength: 0)
                 if store.clipboard == item.id { Image(systemName: store.cutting ? "scissors" : "doc.on.doc").font(.caption) }
             }
-            .padding(.vertical, 5).padding(.horizontal, 4).contentShape(Rectangle())
+            .padding(.vertical, 6).padding(.horizontal, 4).contentShape(Rectangle())
             .background(store.selection == item.id ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 5))
-            .modifier(SessionTreeRowInteraction(select: { store.selection = item.id }, activate: {
-                if item.isFolder { perform { try store.setExpanded(item.id, !item.expanded) } }
-                else { model.openSaved(item, inNewWindow: true) }
-            }))
+            .modifier(SessionTreeRowInteraction(isFolder: item.isFolder, select: { store.selection = item.id }, toggle: {
+                // A folder opens and closes with a single click anywhere on its row, like a Finder sidebar section.
+                guard store.query.isEmpty else { return }
+                withAnimation(.easeOut(duration: 0.18)) { perform { try store.setExpanded(item.id, !item.expanded) } }
+            }, activate: { model.openSaved(item) }))
             .contextMenu {
                 if item.isFolder {
                     Button(T("Open all in tabs")) { perform { try model.openSavedFolder(item.id) } }
@@ -100,7 +101,9 @@ struct SessionTreeView: View {
                 Button(T("Delete…"), role: .destructive) { deleting = item }
             }
             if item.isFolder && (item.expanded || !store.query.isEmpty) {
-                ForEach(store.children(of: item.id).filter { store.matches($0.id) }) { child in row(child).padding(.leading, 14) }
+                ForEach(store.children(of: item.id).filter { store.matches($0.id) }) { child in
+                    row(child).padding(.leading, 14).transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
         })
     }
@@ -128,12 +131,19 @@ struct SessionTreeView: View {
 }
 
 struct SessionTreeRowInteraction: ViewModifier {
+    var isFolder = false
     let select: () -> Void
+    var toggle: () -> Void = {}
     let activate: () -> Void
     func body(content: Content) -> some View {
-        // Selection must not wait for the double-click recognizer to fail.
-        content.onTapGesture(count: 2) { select(); activate() }
-            .simultaneousGesture(TapGesture().onEnded { select() })
+        if isFolder {
+            // Folders have no double-click action, so a single click both selects and toggles at once.
+            content.onTapGesture { select(); toggle() }
+        } else {
+            // Selection must not wait for the double-click recognizer to fail.
+            content.onTapGesture(count: 2) { select(); activate() }
+                .simultaneousGesture(TapGesture().onEnded { select() })
+        }
     }
 }
 

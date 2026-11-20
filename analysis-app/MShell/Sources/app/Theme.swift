@@ -36,7 +36,11 @@ public struct WorkspaceTheme: Identifiable, Sendable {
     public var sidebar: ThemeColor { colors["sideBar.background"] ?? background }
     public var header: ThemeColor { colors["titleBar.activeBackground"] ?? sidebar }
     public var tabs: ThemeColor { colors["editorGroupHeader.tabsBackground"] ?? sidebar }
-    public var accent: ThemeColor { colors["focusBorder"] ?? colors["button.background"] ?? fallback(isDark ? "#62e1c1" : "#0069cc") }
+    /// Some themes use a faint focus border; the accent marks controls, so it must stay visible.
+    public var accent: ThemeColor {
+        [colors["focusBorder"], colors["button.background"]].compactMap { $0 }.first { $0.alpha >= 0.5 }
+            ?? fallback(isDark ? "#62e1c1" : "#0069cc")
+    }
     public var terminalBackground: ThemeColor { colors["terminal.background"] ?? background }
     public var terminalForeground: ThemeColor { colors["terminal.foreground"] ?? foreground }
     public var cursor: ThemeColor { colors["terminalCursor.foreground"] ?? terminalForeground }
@@ -52,13 +56,19 @@ public struct WorkspaceTheme: Identifiable, Sendable {
         return colors["terminal.ansi" + keys[index]] ?? fallback("#" + (isDark ? dark : light)[index])
     }
     private func fallback(_ hex: String) -> ThemeColor { ThemeColor(hex: hex)! }
-    public static let native = WorkspaceTheme(id: "mshell", title: "MShell", appearance: "dark", colors: [
-        "editor.background": ThemeColor(hex: "#0b0e13")!, "editor.foreground": ThemeColor(hex: "#d1e0e6")!,
-        "sideBar.background": ThemeColor(hex: "#11141a")!, "terminal.background": ThemeColor(hex: "#0e1217")!
-    ])
+    /// Default and fallback theme: the first preset (Midnight). The former "mshell" theme was removed;
+    /// a saved "mshell" preference is treated as stale and falls back to this theme.
+    public static let native: WorkspaceTheme = presets[0]
 }
 
 public enum ThemeCatalog {
+    /// License notices for the bundled third-party theme colors.
+    public static func licenseNotices() throws -> String {
+        try ["vscode-themes-license", "vscode-community-themes-licenses"].map { name in
+            guard let url = Bundle.module.url(forResource: name, withExtension: "txt") else { throw ThemeError.missingResources }
+            return try String(contentsOf: url, encoding: .utf8)
+        }.joined(separator: "\n\n")
+    }
     private struct Blueprint: Decodable {
         let schema: String
         let assets: [Asset]
@@ -78,7 +88,7 @@ public enum ThemeCatalog {
         guard SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == expected else { throw ThemeError.invalidResources }
         let blueprint = try JSONDecoder().decode(Blueprint.self, from: data)
         guard blueprint.schema == "carve/frontend-blueprint@1", !blueprint.assets.isEmpty, blueprint.assets.count <= 64 else { throw ThemeError.invalidResources }
-        let defaultThemes = [WorkspaceTheme.native] + WorkspaceTheme.presets
+        let defaultThemes = WorkspaceTheme.presets
         var ids = Set(defaultThemes.map(\.id))
         return defaultThemes + (try blueprint.assets.map { asset in
             guard asset.kind == "color-palette", ids.insert(asset.id).inserted,

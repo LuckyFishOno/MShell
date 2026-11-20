@@ -16,6 +16,15 @@ public struct HostKeyPrompt: Identifiable {
     let key: String
 }
 
+struct HostKeyChange: Identifiable {
+    let id = UUID()
+    let endpoint: String
+    let savedFingerprint: String
+    let receivedFingerprint: String
+    let savedKey: String
+    let receivedKey: String
+}
+
 @MainActor public final class SessionTab: ObservableObject, Identifiable {
     public let id = UUID()
     var opensAutomatically = false
@@ -48,13 +57,17 @@ public struct HostKeyPrompt: Identifiable {
     @Published public var remotePath = "."
     @Published public var entries: [RemoteEntry] = []
     @Published public var progress: Double?
-    @Published public var transcript = ""
+    /// Plain text of the scrollback and screen. Built on demand: rebuilding it after every chunk of
+    /// output cost more than drawing the terminal.
+    public var transcript: String { lines.joined(separator: "\n") }
     @Published public var screenRevision = 0
     @Published var terminalFocusRequest = 0
     @Published public var hostKeyPrompt: HostKeyPrompt?
+    @Published var hostKeyChange: HostKeyChange?
     @Published public var colorScheme: Formats.ColorScheme?
     @Published public var highlights: HighlightSet?
     var epoch = UUID()
+    var terminalID = UUID()
     var fileOperationID = UUID()
     @Published public var terminalReady = false
     @Published public var terminalStarting = false
@@ -77,11 +90,20 @@ public struct HostKeyPrompt: Identifiable {
     }
     func feed(_ text: String) {
         screen.feed(text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: "\r\n"))
-        transcript = lines.joined(separator: "\n"); screenRevision += 1
+        screenRevision += 1
     }
 }
 
 @MainActor public final class WorkspaceModel: ObservableObject {
+    public let layout: WorkspaceLayout
+    @Published private(set) var preferredLayout: WorkspaceLayout
+    private let storage: URL
+
+    func selectLayout(_ layout: WorkspaceLayout) throws {
+        try layout.save(to: storage)
+        preferredLayout = layout
+    }
+
     @Published public private(set) var themeID = WorkspaceTheme.native.id
     @Published public private(set) var themePreview: ThemePreviewState?
     private var themePreviewTask: Task<Void, Never>?
@@ -131,26 +153,53 @@ public struct HostKeyPrompt: Identifiable {
     }
     @Published public var tabs: [SessionTab] = [SessionTab()]
     @Published public private(set) var selection: UUID?
-    @Published private(set) var split: WorkspaceSplit?
+    /// Split layouts. Each group shows as one tab in the tab bar; tabs outside every group show alone.
+    @Published private(set) var groups: [WorkspaceSplit] = [] {
+        didSet {
+            if !groups.contains(where: { $0.contains(maximizedPane) }) { maximizedPane = nil }
+            if split == nil { broadcastInput = false }
+        }
+    }
+    /// The split layout on screen: the group that holds the selected tab.
+    var split: WorkspaceSplit? { groups.first { $0.contains(selection) } }
+    func group(containing id: UUID?) -> WorkspaceSplit? { groups.first { $0.contains(id) } }
+    /// Replaces the group holding `member` (or adds one) with `layout`; nil dissolves it.
+    private func setGroup(containing member: UUID, to layout: WorkspaceSplit?) {
+        var updated = groups
+        if let index = updated.firstIndex(where: { $0.contains(member) }) {
+            if let layout { updated[index] = layout } else { updated.remove(at: index) }
+        } else if let layout { updated.append(layout) }
+        groups = updated
+    }
+    /// The pane temporarily filling the session area, if any. Its siblings keep running.
+    @Published private(set) var maximizedPane: UUID?
+    /// When on, keyboard input in any pane is sent to every pane in the split layout.
+    @Published private(set) var broadcastInput = false
     @Published public var vaultState = "Not configured"
     @Published public var vaultBusy = false
     @Published public var error: String?
     public let sessionTree: SessionTreeStore
+    let quickCommands: QuickCommandStore
     public let knownHosts: KnownHosts
     public let vault: CredentialVault
     var sessionWindows: [UUID: SavedSessionWindow] = [:]
 
-    public static var defaultStorage: URL {
+    nonisolated public static var defaultStorage: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("MShell", isDirectory: true)
     }
     public init(storage: URL? = nil) throws {
-        let storage = storage ?? Self.defaultStorage
+        let storage = (storage ?? Self.defaultStorage).standardizedFileURL
+        self.storage = storage
+        let layout = (try? WorkspaceLayout.load(from: storage)) ?? .native
+        self.layout = layout
+        preferredLayout = layout
         themes = try ThemeCatalog.bundled()
         themePreferencesURL = storage.appendingPathComponent("appearance.json")
         if let data = try? Data(contentsOf: themePreferencesURL), let preference = try? JSONDecoder().decode(ThemePreference.self, from: data), themes.contains(where: { $0.id == preference.selectedID }) {
             themeID = preference.selectedID
         }
         sessionTree = try SessionTreeStore(url: storage.appendingPathComponent("sessions.json"))
+        quickCommands = QuickCommandStore(url: storage.appendingPathComponent("quick-commands.json"))
         knownHosts = try KnownHosts(url: storage.appendingPathComponent("known-hosts.json"))
         vault = try CredentialVault(url: storage.appendingPathComponent("password-vault.json"))
         selection = tabs[0].id
@@ -158,41 +207,91 @@ public struct HostKeyPrompt: Identifiable {
     public var selected: SessionTab? { tabs.first { $0.id == selection } }
     func selectTab(_ id: UUID, focusTerminal: Bool = true) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
-        if var layout = split, !layout.contains(id) {
-            layout.replace(selection, with: id)
-            split = layout
-        }
+        if maximizedPane != nil && !(split?.contains(id) ?? false) { maximizedPane = nil }
         selection = id
         if focusTerminal { tab.terminalFocusRequest += 1 }
     }
 
+    /// Splits the selected pane. The new pane shows the most recent tab that is not already visible,
+    /// or a new local terminal. Focus stays on the pane that was split.
     func splitWorkspace(_ axis: WorkspaceSplitAxis) {
-        if var layout = split {
-            layout.axis = axis
-            split = layout
-            return
-        }
-        guard let first = selected else { return }
-        let second = tabs.last(where: { $0.id != first.id }) ?? addLocalTab()
-        split = WorkspaceSplit(axis: axis, first: first.id, second: second.id)
-        selectTab(first.id)
+        guard let active = selected else { return }
+        let grouped = Set(groups.flatMap(\.tabIDs)).union([active.id])
+        let added = tabs.last(where: { !grouped.contains($0.id) }) ?? addLocalTab(select: false)
+        setGroup(containing: active.id, to: split?.splitting(active.id, axis: axis, adding: added.id)
+            ?? WorkspaceSplit(axis: axis, first: active.id, second: added.id))
+        maximizedPane = nil
+        selectTab(active.id)
     }
 
+    /// Ungroups the split on screen; its panes become separate tabs again.
     func closeSplit() {
-        split = nil
-        if let selection { selectTab(selection) }
+        guard let selection else { return }
+        setGroup(containing: selection, to: nil)
+        selectTab(selection)
     }
 
-    @discardableResult public func addTab() -> SessionTab {
+    /// Takes a pane out of its split group and shows it as its own tab.
+    func detachPane(_ id: UUID) {
+        guard let layout = group(containing: id) else { return }
+        setGroup(containing: id, to: layout.removing(id))
+        selectTab(id)
+    }
+
+    /// Places a dragged tab on a pane. An edge splits that pane toward the edge; the center shows the
+    /// dragged tab in that pane, swapping places when both are already visible. Dragging a visible
+    /// pane to another edge moves it.
+    func placeTab(_ dragged: UUID, at edge: PaneDropEdge, of target: UUID) {
+        guard dragged != target, tabs.contains(where: { $0.id == dragged }), tabs.contains(where: { $0.id == target }) else { return }
+        var root = group(containing: target)?.root ?? .tab(target)
+        if !root.contains(dragged), let source = group(containing: dragged) {
+            // Leaving another group: that group keeps its other panes.
+            setGroup(containing: dragged, to: source.removing(dragged))
+        }
+        if edge == .center {
+            root = root.contains(dragged) ? root.swapping(dragged, target) : root.replacing(target, with: dragged)
+        } else {
+            if root.contains(dragged) {
+                guard let remaining = root.removing(dragged) else { return }
+                root = remaining
+            }
+            root = root.splitting(target, axis: edge.axis, adding: dragged, newFirst: edge.placesNewFirst)
+        }
+        setGroup(containing: target, to: nil)
+        if let layout = WorkspaceSplit.make(root) { groups.append(layout) }
+        maximizedPane = nil
+        selectTab(dragged)
+    }
+
+    func toggleMaximizedPane(_ id: UUID) {
+        guard split?.contains(id) == true else { return }
+        maximizedPane = maximizedPane == id ? nil : id
+        selectTab(id)
+    }
+
+    func toggleBroadcastInput() {
+        broadcastInput = split != nil && !broadcastInput
+    }
+
+    /// Keyboard and paste input from a terminal view. Terminal replies and quick commands use
+    /// `sendTerminal` and always stay with their own tab.
+    func typeTerminal(_ tab: SessionTab, bytes: [UInt8]) {
+        guard broadcastInput, let layout = split, layout.contains(tab.id) else { return sendTerminal(tab, bytes: bytes) }
+        for id in layout.tabIDs {
+            if let target = tabs.first(where: { $0.id == id }) { enqueueTerminalInput(target, bytes: bytes) }
+        }
+    }
+
+    @discardableResult public func addTab(select: Bool = true) -> SessionTab {
         let tab = SessionTab()
         tabs.append(tab)
-        selectTab(tab.id)
+        if select { selectTab(tab.id) }
         return tab
     }
-    @discardableResult public func addLocalTab() -> SessionTab {
-        let tab = addTab(); tab.isLocal = true; tab.title = "Local terminal"
+    @discardableResult public func addLocalTab(select: Bool = true) -> SessionTab {
+        let tab = addTab(select: select); tab.isLocal = true; tab.title = "Local terminal"
         tab.host = "127.0.0.1"; tab.username = NSUserName()
-        tab.screen = TerminalScreen(); tab.transcript = ""; tab.screenRevision += 1
+        tab.screen = TerminalScreen(); tab.screenRevision += 1
         startLocalTerminal(tab)
         return tab
     }
@@ -207,13 +306,14 @@ public struct HostKeyPrompt: Identifiable {
                         tab.localShell?.close(); tab.localShell = nil
                         tab.terminalReady = false; tab.connected = false; tab.status = "Shell closed"
                     } else {
-                        tab.screen.feed(Array(data)); tab.transcript = tab.lines.joined(separator: "\n"); tab.screenRevision += 1
+                        tab.screen.feed(Array(data)); tab.screenRevision += 1
                         for event in tab.screen.takeEvents() {
                             if case .reply(let bytes) = event { self?.sendTerminal(tab, bytes: bytes) }
                         }
                     }
                 }
             }
+            tab.terminalID = UUID()
             tab.connected = true; tab.terminalReady = true; tab.status = "Connected"; tab.error = nil
         } catch { tab.error = error.localizedDescription }
     }
@@ -221,14 +321,20 @@ public struct HostKeyPrompt: Identifiable {
         await disconnect(tab)
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
         tabs.remove(at: index)
-        if let layout = split, layout.contains(tab.id) {
-            split = nil
-            selectTab(layout.other(than: tab.id))
+        if let layout = group(containing: tab.id) {
+            let remaining = layout.tabIDs.filter { $0 != tab.id }
+            setGroup(containing: tab.id, to: layout.removing(tab.id))
+            if selection == tab.id, let next = remaining.first { selectTab(next) }
         } else if tabs.isEmpty {
             _ = addLocalTab()
         } else if selection == tab.id {
             selectTab(tabs[min(index, tabs.count - 1)].id)
         }
+    }
+    /// Disconnects and closes the tab, or its own window when it was opened in one.
+    public func disconnectAndClose(_ tab: SessionTab) async {
+        if let window = sessionWindows[tab.id]?.window { window.close(); return }
+        await closeTab(tab)
     }
     public func disconnect(_ tab: SessionTab) async {
         await endConnection(tab, lost: false)
@@ -239,6 +345,7 @@ public struct HostKeyPrompt: Identifiable {
         tab.epoch = UUID()
         tab.localShell?.close(); tab.localShell = nil
         answerHostKey(tab, approve: false)
+        tab.hostKeyChange = nil
         let ssh = tab.session, transfer = tab.transfer, shell = tab.shell, jump = tab.pendingJump
         tab.pendingJump = nil
         tab.disconnectWatcher?.cancel()
@@ -278,6 +385,7 @@ public struct HostKeyPrompt: Identifiable {
         if tab.isLocal { startLocalTerminal(tab); return }
         guard !tab.busy, !tab.connected else { return }
         tab.error = nil
+        tab.hostKeyChange = nil
         let host = tab.host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let port = Int(tab.port), (1...65535).contains(port), !host.isEmpty, !tab.username.isEmpty,
               !tab.useProxy || (!tab.proxyHost.isEmpty && Int(tab.proxyPort).map { (1...65535).contains($0) } == true) else {
@@ -390,10 +498,12 @@ public struct HostKeyPrompt: Identifiable {
             }
             return ssh
         } catch SSHError.authenticationFailed {
-            if password == nil {
+            guard let password else {
                 throw WorkspaceError.invalid("SSH authentication failed. Check the username and private key.")
             }
-            if tab.epoch == epoch { await vault.forgetForSession(id: id) }
+            if secret.isEmpty, tab.epoch == epoch, tab.error == nil {
+                await vault.forgetForSession(id: id, matching: password, generation: credentialGeneration)
+            }
             throw SSHError.authenticationFailed
         }
     }
@@ -401,7 +511,13 @@ public struct HostKeyPrompt: Identifiable {
     private func confirmKey(_ tab: SessionTab, endpoint: String, key: String, epoch: UUID) async throws {
         guard tab.epoch == epoch else { throw WorkspaceError.rejectedHostKey }
         do { if try knownHosts.isTrusted(endpoint: endpoint, key: key) { return } }
-        catch { tab.error = message(for: error); throw error }
+        catch WorkspaceError.changedHostKey {
+            guard let savedKey = knownHosts.trustedKey(for: endpoint) else { throw WorkspaceError.rejectedHostKey }
+            tab.hostKeyChange = try HostKeyChange(endpoint: endpoint, savedFingerprint: KnownHosts.fingerprint(savedKey),
+                                                  receivedFingerprint: KnownHosts.fingerprint(key), savedKey: savedKey, receivedKey: key)
+            tab.error = "The server host key has changed. Review its fingerprint before reconnecting."
+            throw WorkspaceError.changedHostKey(endpoint)
+        } catch { tab.error = message(for: error); throw error }
         guard tab.trustContinuation == nil else { throw WorkspaceError.rejectedHostKey }
         let prompt = HostKeyPrompt(endpoint: endpoint, fingerprint: try KnownHosts.fingerprint(key), key: key)
         try await withCheckedThrowingContinuation { continuation in tab.trustContinuation = continuation; tab.hostKeyPrompt = prompt }
@@ -417,6 +533,25 @@ public struct HostKeyPrompt: Identifiable {
             continuation.resume()
         } catch { continuation.resume(throwing: error) }
     }
+
+    func updateHostKeyAndReconnect(_ tab: SessionTab, change: HostKeyChange) async {
+        guard !tab.busy, !tab.connected, tab.hostKeyChange?.id == change.id else { return }
+        let host = tab.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = Int(tab.port).map { KnownHosts.endpoint(host: host, port: $0) }
+        let jump = sessionTree.node(tab.jumpSessionID)?.connection.map { KnownHosts.endpoint(host: $0.host, port: $0.port) }
+        guard change.endpoint == target || change.endpoint == jump else {
+            tab.hostKeyChange = nil
+            tab.error = "Connection settings changed. Connect again to review the host key."
+            return
+        }
+        do { try knownHosts.replace(endpoint: change.endpoint, expectedKey: change.savedKey, with: change.receivedKey) }
+        catch {
+            tab.hostKeyChange = nil
+            tab.error = message(for: error)
+            return
+        }
+        await connect(tab)
+    }
     public func startTerminal(_ tab: SessionTab) async {
         guard tab.connected, let ssh = tab.session, tab.shell == nil, !tab.terminalStarting else { return }
         let epoch = tab.epoch; tab.terminalStarting = true
@@ -426,38 +561,60 @@ public struct HostKeyPrompt: Identifiable {
             guard tab.epoch == epoch else { await shell.close(); return }
             try await shell.resize(rows: tab.screen.rows, columns: tab.screen.cols)
             guard tab.epoch == epoch else { await shell.close(); return }
+            tab.terminalID = UUID()
             tab.shell = shell; tab.terminalReady = true; tab.error = nil
             tab.shellOutput = Task { @MainActor [weak self, weak tab] in
                 do {
                     for try await bytes in shell.output {
                         guard let tab, tab.epoch == epoch, !Task.isCancelled else { return }
                         tab.screen.feed(bytes)
-                        tab.transcript = tab.lines.joined(separator: "\n"); tab.screenRevision += 1
+                        tab.screenRevision += 1
                         for event in tab.screen.takeEvents() {
                             if case .reply(let bytes) = event { self?.sendTerminal(tab, bytes: bytes) }
                         }
                     }
                 } catch { if let tab, tab.epoch == epoch, !Task.isCancelled { tab.error = message(for: error) } }
-                if let tab, tab.epoch == epoch { tab.terminalReady = false; tab.shell = nil; tab.status = "Shell closed" }
+                if let tab, tab.epoch == epoch {
+                    tab.inputTask?.cancel(); tab.inputTask = nil
+                    tab.pendingInput.removeAll(); tab.pendingInputBytes = 0
+                    tab.terminalReady = false; tab.shell = nil; tab.status = "Shell closed"
+                }
             }
         } catch { if tab.epoch == epoch { tab.error = message(for: error) } }
     }
     public func sendTerminal(_ tab: SessionTab, bytes: [UInt8]) {
-        if tab.isLocal { if tab.terminalReady && bytes.count <= 262144 { tab.localShell?.send(bytes) }; return }
-        guard tab.terminalReady, let shell = tab.shell, !bytes.isEmpty else { return }
-        guard tab.pendingInputBytes + bytes.count <= 262144 else { tab.error = "Terminal input queue exceeds 256 KiB."; return }
+        enqueueTerminalInput(tab, bytes: bytes)
+    }
+
+    @discardableResult func enqueueTerminalInput(_ tab: SessionTab, bytes: [UInt8]) -> Bool {
+        guard tab.terminalReady, !bytes.isEmpty, bytes.count <= 262144 else { return false }
+        if tab.isLocal {
+            guard let shell = tab.localShell else { return false }
+            shell.send(bytes)
+            return true
+        }
+        guard let shell = tab.shell else { return false }
+        guard tab.pendingInputBytes + bytes.count <= 262144 else { tab.error = "Terminal input queue exceeds 256 KiB."; return false }
         tab.pendingInput.append(bytes); tab.pendingInputBytes += bytes.count
-        guard tab.inputTask == nil else { return }
+        guard tab.inputTask == nil else { return true }
         let epoch = tab.epoch
+        let terminalID = tab.terminalID
         tab.inputTask = Task { @MainActor [weak tab] in
             guard let tab else { return }
-            defer { if tab.epoch == epoch { tab.inputTask = nil } }
-            while !tab.pendingInput.isEmpty, tab.epoch == epoch, !Task.isCancelled {
+            defer { if tab.epoch == epoch, tab.shell === shell { tab.inputTask = nil } }
+            while !tab.pendingInput.isEmpty, tab.epoch == epoch, tab.terminalID == terminalID, !Task.isCancelled {
                 let bytes = tab.pendingInput.removeFirst(); tab.pendingInputBytes -= bytes.count
                 do { try await shell.send(bytes) }
-                catch { if tab.epoch == epoch { tab.error = message(for: error) }; return }
+                catch {
+                    if tab.epoch == epoch, tab.shell === shell, !Task.isCancelled {
+                        tab.pendingInput.removeAll(); tab.pendingInputBytes = 0
+                        tab.error = message(for: error)
+                    }
+                    return
+                }
             }
         }
+        return true
     }
     public func resizeTerminal(_ tab: SessionTab, rows: Int, columns: Int) {
         let rows = min(200, max(5, rows)), columns = min(400, max(20, columns))

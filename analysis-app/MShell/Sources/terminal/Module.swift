@@ -102,6 +102,13 @@ public final class TerminalScreen {
         set { if usingAlternate { alternate = newValue } else { primary = newValue } }
     }
 
+    /// Mutates the active grid in place. Copying it into a local first (`var g = grid`) made every
+    /// written character copy its row, which dominated the cost of large output.
+    /// The body must not read `grid`, `primary` or `alternate`.
+    private func mutateGrid(_ body: (inout [[Cell]]) -> Void) {
+        if usingAlternate { body(&alternate) } else { body(&primary) }
+    }
+
     public func takeEvents() -> [TerminalEvent] { defer { events = [] }; return events }
 
     // MARK: Input
@@ -239,32 +246,33 @@ public final class TerminalScreen {
         if w == 0 {
             // Combine with the previous cell.
             let col = wrapPending ? cursorCol : max(0, cursorCol - 1)
-            var g = grid; let prev = g[cursorRow][col].character
-            g[cursorRow][col].character = Character(String(prev) + String(c)); grid = g
+            let row = cursorRow
+            mutateGrid { g in g[row][col].character = Character(String(g[row][col].character) + String(c)) }
             return
         }
         if wrapPending || cursorCol + w > cols {
             if autowrap { cursorCol = 0; lineFeed() } else { cursorCol = max(0, cols - w) }
             wrapPending = false
         }
-        var g = grid
-        if insertMode {
-            g[cursorRow].insert(contentsOf: Array(repeating: Cell.blank, count: w), at: cursorCol)
-            g[cursorRow].removeLast(w)
+        let row = cursorRow, col = cursorCol, insert = insertMode, current = style, blank = blankCell(), width = cols
+        mutateGrid { g in
+            if insert {
+                g[row].insert(contentsOf: Array(repeating: Cell.blank, count: w), at: col)
+                g[row].removeLast(w)
+            }
+            Self.clearWide(&g, row, col, cols: width, blank: blank)
+            if w == 2 { Self.clearWide(&g, row, col + 1, cols: width, blank: blank) }
+            g[row][col] = Cell(character: c, style: current, width: UInt8(w))
+            if w == 2 { g[row][col + 1] = Cell(character: " ", style: current, width: 0) }
         }
-        clearWide(&g, cursorRow, cursorCol)
-        if w == 2 { clearWide(&g, cursorRow, cursorCol + 1) }
-        g[cursorRow][cursorCol] = Cell(character: c, style: style, width: UInt8(w))
-        if w == 2 { g[cursorRow][cursorCol + 1] = Cell(character: " ", style: style, width: 0) }
-        grid = g
         if cursorCol + w >= cols { cursorCol = cols - 1; wrapPending = autowrap } else { cursorCol += w }
     }
 
     /// Overwriting either half of a wide character blanks the other half.
-    private func clearWide(_ g: inout [[Cell]], _ r: Int, _ c: Int) {
+    private static func clearWide(_ g: inout [[Cell]], _ r: Int, _ c: Int, cols: Int, blank: Cell) {
         guard c < cols else { return }
-        if g[r][c].width == 0, c > 0 { g[r][c - 1] = blankCell() }
-        if g[r][c].width == 2, c + 1 < cols { g[r][c + 1] = blankCell() }
+        if g[r][c].width == 0, c > 0 { g[r][c - 1] = blank }
+        if g[r][c].width == 2, c + 1 < cols { g[r][c + 1] = blank }
     }
 
     private func blankCell() -> Cell { var c = Cell.blank; c.style.background = style.background; return c }
@@ -282,25 +290,30 @@ public final class TerminalScreen {
     }
 
     private func scrollUp(_ n: Int) {
-        var g = grid
-        for _ in 0..<min(n, scrollBottom - scrollTop + 1) {
-            let line = g.remove(at: scrollTop)
-            if !usingAlternate && scrollTop == 0 && options.scrollbackSize > 0 {
-                scrollback.append(line)
-                if scrollback.count > options.scrollbackSize { scrollback.removeFirst(scrollback.count - options.scrollbackSize) }
+        let top = scrollTop, bottom = scrollBottom, blankRow = Array(repeating: blankCell(), count: cols)
+        let keeps = !usingAlternate && top == 0 && options.scrollbackSize > 0
+        var removed: [[Cell]] = []
+        mutateGrid { g in
+            for _ in 0..<min(n, bottom - top + 1) {
+                let line = g.remove(at: top)
+                if keeps { removed.append(line) }
+                g.insert(blankRow, at: bottom)
             }
-            g.insert(Array(repeating: blankCell(), count: cols), at: scrollBottom)
         }
-        grid = g
+        if !removed.isEmpty {
+            scrollback.append(contentsOf: removed)
+            if scrollback.count > options.scrollbackSize { scrollback.removeFirst(scrollback.count - options.scrollbackSize) }
+        }
     }
 
     private func scrollDown(_ n: Int) {
-        var g = grid
-        for _ in 0..<min(n, scrollBottom - scrollTop + 1) {
-            g.remove(at: scrollBottom)
-            g.insert(Array(repeating: blankCell(), count: cols), at: scrollTop)
+        let top = scrollTop, bottom = scrollBottom, blankRow = Array(repeating: blankCell(), count: cols)
+        mutateGrid { g in
+            for _ in 0..<min(n, bottom - top + 1) {
+                g.remove(at: bottom)
+                g.insert(blankRow, at: top)
+            }
         }
-        grid = g
     }
 
     private func tab() {

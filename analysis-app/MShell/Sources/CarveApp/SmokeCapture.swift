@@ -13,7 +13,8 @@ import Foundation
             var report: [String: Any] = ["scope": "own-application-window-bitmap", "captured": false]
             report["state"] = state()
             let preferences = args.contains("--show-preferences")
-            if let window = NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) && (preferences ? $0.title != "MShell" : $0.title == "MShell") }), let view = window.contentView,
+            if let window = NSApp.windows.first(where: { $0.isVisible && $0.styleMask.contains(.titled) && (preferences ? $0.title != "MShell" : $0.title == "MShell") }),
+               let view = window.contentView?.superview ?? window.contentView, // the frame view includes the toolbar
                let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: bitmap)
                 if let data = bitmap.representation(using: .png, properties: [:]) {

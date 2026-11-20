@@ -122,6 +122,44 @@ import AppKit
         XCTAssertTrue(model.sessionWindows.isEmpty)
         await model.closeAll()
     }
+    func testClosingSavedConnectionWindowKeepsItsSuccessfulPasswordForReopening() async throws {
+        _ = NSApplication.shared
+        try await OpenSSHFixture.withServer(interactive: true) { port, _ in
+            let (model, root) = try self.workspace(), item = try self.saved(model, port: port)
+            let first = try XCTUnwrap(model.openSaved(item, inNewWindow: true))
+            await first.savedConnectionTask?.value
+            XCTAssertFalse(first.connected)
+
+            first.password = "secret"
+            first.error = nil
+            let login = Task { await model.connect(first) }
+            try await self.approve(model, tab: first)
+            await login.value
+            XCTAssertTrue(first.connected)
+            let controller = try XCTUnwrap(model.sessionWindows[first.id])
+            controller.close()
+            for _ in 0..<100 {
+                if !first.connected { break }
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            XCTAssertFalse(first.connected)
+
+            let failed = model.addTab()
+            failed.host = "127.0.0.1"; failed.port = String(port); failed.username = "carve"; failed.password = "wrong"
+            await model.connect(failed)
+            XCTAssertFalse(failed.connected)
+
+            let reopened = try XCTUnwrap(model.openSaved(item, inNewWindow: true))
+            await reopened.savedConnectionTask?.value
+            XCTAssertTrue(reopened.connected)
+            XCTAssertTrue(reopened.terminalReady)
+            XCTAssertEqual(reopened.password, "")
+            XCTAssertNil(reopened.hostKeyPrompt)
+            XCTAssertNil(reopened.error)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("password-vault.json").path))
+            await model.closeAll()
+        }
+    }
     func testLockedVaultDoesNotReusePreviousCredentialsOrConnect() async throws {
         let (model, _) = try workspace(), item = try saved(model, port: 22)
         try await model.vault.create(password: "fixture-master", iterations: 100)
@@ -132,17 +170,31 @@ import AppKit
         XCTAssertFalse(tab.connected); XCTAssertFalse(tab.busy); XCTAssertNotNil(tab.error); XCTAssertNil(tab.hostKeyPrompt)
         await model.closeAll()
     }
-    func testChangedHostKeyIsStillRejectedDuringAutomaticLogin() async throws {
+    func testAutomaticLoginWithChangedHostKeyRequiresReviewBeforeRetryingSavedPassword() async throws {
         try await OpenSSHFixture.withServer(interactive: true) { port, _ in
-            let (model, _) = try self.workspace(), item = try self.saved(model, port: port)
+            let (model, root) = try self.workspace(), item = try self.saved(model, port: port)
             let endpoint = "[127.0.0.1]:\(port)"
-            try model.knownHosts.trust(endpoint: endpoint, key: "ssh-test " + Data("different-public-key".utf8).base64EncodedString())
-            try await model.vault.create(password: "fixture-master", iterations: 100)
-            try await model.vault.save(id: "carve@\(endpoint)", password: "secret")
+            let oldKey = "ssh-test " + Data("different-public-key".utf8).base64EncodedString()
+            try model.knownHosts.trust(endpoint: endpoint, key: oldKey)
+            let generation = await model.vault.sessionGeneration
+            await model.vault.rememberForSession(id: "carve@\(endpoint)", password: "secret", generation: generation)
             let tab = try XCTUnwrap(model.openSaved(item))
             await tab.savedConnectionTask?.value
             XCTAssertFalse(tab.connected); XCTAssertNotNil(tab.error); XCTAssertNil(tab.hostKeyPrompt)
             XCTAssertTrue(tab.error?.contains("has changed") == true)
+
+            let change = try XCTUnwrap(tab.hostKeyChange)
+            XCTAssertEqual(change.savedFingerprint, try KnownHosts.fingerprint(oldKey))
+            XCTAssertEqual(change.receivedFingerprint, try KnownHosts.fingerprint(change.receivedKey))
+            XCTAssertNotEqual(change.savedFingerprint, change.receivedFingerprint)
+            XCTAssertTrue(try model.knownHosts.isTrusted(endpoint: endpoint, key: oldKey))
+
+            await model.updateHostKeyAndReconnect(tab, change: change)
+            XCTAssertTrue(tab.connected); XCTAssertEqual(tab.password, ""); XCTAssertNil(tab.error)
+            XCTAssertNil(tab.hostKeyPrompt); XCTAssertNil(tab.hostKeyChange)
+            let reloaded = try WorkspaceModel(storage: root)
+            XCTAssertTrue(try reloaded.knownHosts.isTrusted(endpoint: endpoint, key: change.receivedKey))
+            XCTAssertThrowsError(try reloaded.knownHosts.isTrusted(endpoint: endpoint, key: oldKey))
             await model.closeAll()
         }
     }

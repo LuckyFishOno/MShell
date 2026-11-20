@@ -938,6 +938,36 @@
     "zh-Hant": "\u51b0\u539f",
     "zh-Hans": "\u51b0\u539f"
   },
+  "Kali Dark": {
+    "en": "Kali Dark",
+    "zh-Hant": "Kali \u6df1\u8272",
+    "zh-Hans": "Kali \u6df1\u8272"
+  },
+  "GNOME Dark": {
+    "en": "GNOME Dark",
+    "zh-Hant": "GNOME \u6df1\u8272",
+    "zh-Hans": "GNOME \u6df1\u8272"
+  },
+  "GNOME Light": {
+    "en": "GNOME Light",
+    "zh-Hant": "GNOME \u6dfa\u8272",
+    "zh-Hans": "GNOME \u6d45\u8272"
+  },
+  "Search themes": {
+    "en": "Search themes",
+    "zh-Hant": "\u641c\u5c0b\u4e3b\u984c",
+    "zh-Hans": "\u641c\u7d22\u4e3b\u9898"
+  },
+  "No matching themes": {
+    "en": "No matching themes",
+    "zh-Hant": "\u6c92\u6709\u7b26\u5408\u7684\u4e3b\u984c",
+    "zh-Hans": "\u6ca1\u6709\u7b26\u5408\u7684\u4e3b\u9898"
+  },
+  "Linux Console": {
+    "en": "Linux Console",
+    "zh-Hant": "Linux \u4e3b\u63a7\u53f0",
+    "zh-Hans": "Linux \u63a7\u5236\u53f0"
+  },
   "Dark theme": {
     "en": "Dark theme",
     "zh-Hant": "\u6df1\u8272",
@@ -972,5 +1002,251 @@
     "en": "Close split view",
     "zh-Hant": "\u53d6\u6d88\u5206\u5272",
     "zh-Hans": "\u7ed3\u675f\u5206\u5c4f"
+  },
+  "Maximize pane": {
+    "en": "Maximize pane",
+    "zh-Hant": "\u653e\u5927\u6b64\u683c",
+    "zh-Hans": "\u653e\u5927\u6b64\u683c"
+  },
+  "Restore pane": {
+    "en": "Restore pane",
+    "zh-Hant": "\u9084\u539f\u5206\u5272",
+    "zh-Hans": "\u8fd8\u539f\u5206\u5c4f"
+  },
+  "Type into all panes": {
+    "en": "Type into all panes",
+    "zh-Hant": "\u540c\u6b65\u8f38\u5165\u5230\u6240\u6709\u683c",
+    "zh-Hans": "\u540c\u6b65\u8f93\u5165\u5230\u6240\u6709\u683c"
+  },
+  "Stop typing into all panes": {
+    "en": "Stop typing into all panes",
+    "zh-Hant": "\u505c\u6b62\u540c\u6b65\u8f38\u5165",
+    "zh-Hans": "\u505c\u6b62\u540c\u6b65\u8f93\u5165"
+  },
+  "Quick commands": {
+    "zh-Hant": "\u5e38\u7528\u6307\u4ee4",
+    "zh-Hans": "\u5e38\u7528\u547d\u4ee4"
+  },
+  "Close quick commands": {
+    "zh-Hant": "\u95dc\u9589\u5e38\u7528\u6307\u4ee4",
+    "zh-Hans": "\u5173\u95ed\u5e38\u7528\u547d\u4ee4"
+  },
+  "Filter commands": {
+    "zh-Hant": "\u641c\u5c0b\u6307\u4ee4",
+    "zh-Hans": "\u641c\u7d22\u547d\u4ee4"
+  },
+  "Add command": {
+    "zh-Hant": "\u65b0\u589e\u6307\u4ee4",
+    "zh-Hans": "\u6dfb\u52a0\u547d\u4ee4"
+  },
+  "Select an open terminal to use a command.": {
+    "zh-Hant": "\u9078\u53d6\u5df2\u958b\u555f\u7684\u7d42\u7aef\uff0c\u5c31\u80fd\u9001\u51fa\u6307\u4ee4\u3002",
+    "zh-Hans": "\u9009\u4e2d\u5df2\u6253\u5f00\u7684\u7ec8\u7aef\uff0c\u5373\u53ef\u53d1\u9001\u547d\u4ee4\u3002"
+  },
+  "Add commands you use often.": {
+    "zh-Hant": "\u628a\u5e38\u7528\u7684\u6307\u4ee4\u52a0\u5230\u9019\u88e1\u3002",
+    "zh-Hans": "\u628a\u7ecf\u5e38\u7528\u5230\u7684\u547d\u4ee4\u6dfb\u52a0\u5230\u8fd9\u91cc\u3002"
+  },
+  "No matching commands.": {
+    "zh-Hant": "\u627e\u4e0d\u5230\u7b26\u5408\u7684\u6307\u4ee4\u3002",
+    "zh-Hans": "\u6ca1\u6709\u627e\u5230\u5339\u914d\u7684\u547d\u4ee4\u3002"
+  },
+  "Edit command": {
+    "zh-Hant": "\u7de8\u8f2f\u6307\u4ee4",
+    "zh-Hans": "\u7f16\u8f91\u547d\u4ee4"
+  },
+  "Insert": {
+    "zh-Hant": "\u63d2\u5165",
+    "zh-Hans": "\u63d2\u5165"
+  },
+  "Insert the command without pressing Return.": {
+    "zh-Hant": "\u5c07\u6307\u4ee4\u586b\u5165\u7d42\u7aef\uff0c\u8b93\u4f60\u5148\u6aa2\u67e5\u6216\u4fee\u6539\u3002",
+    "zh-Hans": "\u5c06\u547d\u4ee4\u586b\u5165\u7ec8\u7aef\uff0c\u65b9\u4fbf\u5148\u68c0\u67e5\u6216\u4fee\u6539\u3002"
+  },
+  "Run\u2026": {
+    "zh-Hant": "\u57f7\u884c\u2026",
+    "zh-Hans": "\u8fd0\u884c\u2026"
+  },
+  "Run saved command?": {
+    "zh-Hant": "\u8981\u57f7\u884c\u9019\u689d\u6307\u4ee4\u55ce\uff1f",
+    "zh-Hans": "\u8981\u8fd0\u884c\u8fd9\u6761\u547d\u4ee4\u5417\uff1f"
+  },
+  "MShell inserts the command and presses Return. Any text already entered stays on the line.": {
+    "zh-Hant": "MShell \u6703\u63d2\u5165\u6307\u4ee4\u4e26\u6309\u4e0b Return\u3002\u9019\u4e00\u884c\u539f\u672c\u8f38\u5165\u7684\u6587\u5b57\u4e5f\u6703\u4e00\u8d77\u9001\u51fa\u3002",
+    "zh-Hans": "MShell \u4f1a\u63d2\u5165\u547d\u4ee4\u5e76\u6309\u4e0b Return\u3002\u8fd9\u4e00\u884c\u5df2\u6709\u7684\u6587\u5b57\u4e5f\u4f1a\u4e00\u5e76\u53d1\u9001\u3002"
+  },
+  "Run command": {
+    "zh-Hant": "\u57f7\u884c\u6307\u4ee4",
+    "zh-Hans": "\u8fd0\u884c\u547d\u4ee4"
+  },
+  "Couldn\u2019t send the command to this terminal.": {
+    "zh-Hant": "\u6307\u4ee4\u672a\u9001\u51fa\u3002\u8acb\u78ba\u8a8d\u7d42\u7aef\u4ecd\u53ef\u4f7f\u7528\u3002",
+    "zh-Hans": "\u547d\u4ee4\u672a\u53d1\u9001\uff0c\u8bf7\u786e\u8ba4\u7ec8\u7aef\u4ecd\u53ef\u7528\u3002"
+  },
+  "Command name": {
+    "zh-Hant": "\u6307\u4ee4\u540d\u7a31",
+    "zh-Hans": "\u547d\u4ee4\u540d\u79f0"
+  },
+  "Command text": {
+    "zh-Hant": "\u6307\u4ee4\u5167\u5bb9",
+    "zh-Hans": "\u547d\u4ee4\u5185\u5bb9"
+  },
+  "Use one line. Saved commands are stored locally as plain text.": {
+    "zh-Hant": "\u8acb\u8f38\u5165\u4e00\u884c\u6307\u4ee4\u3002\u6307\u4ee4\u6703\u4ee5\u7d14\u6587\u5b57\u5132\u5b58\u5728\u9019\u53f0 Mac\u3002",
+    "zh-Hans": "\u8bf7\u8f93\u5165\u4e00\u884c\u547d\u4ee4\u3002\u547d\u4ee4\u4f1a\u4ee5\u7eaf\u6587\u672c\u4fdd\u5b58\u5728\u8fd9\u53f0 Mac \u4e0a\u3002"
+  },
+  "Delete saved command?": {
+    "zh-Hant": "\u8981\u522a\u9664\u9019\u689d\u6307\u4ee4\u55ce\uff1f",
+    "zh-Hans": "\u8981\u5220\u9664\u8fd9\u6761\u547d\u4ee4\u5417\uff1f"
+  },
+  "Enter a short name on one line.": {
+    "zh-Hant": "\u8acb\u8f38\u5165\u4e00\u884c\u7c21\u77ed\u7684\u540d\u7a31\u3002",
+    "zh-Hans": "\u8bf7\u8f93\u5165\u7b80\u77ed\u7684\u5355\u884c\u540d\u79f0\u3002"
+  },
+  "Enter a single-line command of up to 4 KiB without control characters.": {
+    "zh-Hant": "\u8acb\u8f38\u5165\u4e00\u884c\u6307\u4ee4\uff0c\u6700\u591a 4 KiB\uff0c\u4e14\u4e0d\u80fd\u542b\u6709\u63a7\u5236\u5b57\u5143\u3002",
+    "zh-Hans": "\u8bf7\u8f93\u5165\u5355\u884c\u547d\u4ee4\uff0c\u6700\u591a 4 KiB\uff0c\u4e14\u4e0d\u80fd\u542b\u6709\u63a7\u5236\u5b57\u7b26\u3002"
+  },
+  "You can save up to 256 quick commands.": {
+    "zh-Hant": "\u6700\u591a\u53ef\u5132\u5b58 256 \u689d\u6307\u4ee4\u3002",
+    "zh-Hans": "\u6700\u591a\u53ef\u4fdd\u5b58 256 \u6761\u547d\u4ee4\u3002"
+  },
+  "Couldn\u2019t read saved commands. Check quick-commands.json in the workspace folder, then reopen MShell.": {
+    "zh-Hant": "\u7121\u6cd5\u8b80\u53d6\u5df2\u5132\u5b58\u7684\u6307\u4ee4\u3002\u8acb\u6aa2\u67e5\u5de5\u4f5c\u5340\u88e1\u7684 quick-commands.json\uff0c\u518d\u91cd\u65b0\u958b\u555f MShell\u3002",
+    "zh-Hans": "\u65e0\u6cd5\u8bfb\u53d6\u5df2\u4fdd\u5b58\u7684\u547d\u4ee4\u3002\u8bf7\u68c0\u67e5\u5de5\u4f5c\u533a\u91cc\u7684 quick-commands.json\uff0c\u518d\u91cd\u65b0\u6253\u5f00 MShell\u3002"
+  },
+  "Tab %d \u00b7 %@": {
+    "zh-Hant": "\u9801\u7c64 %d \u00b7 %@",
+    "zh-Hans": "\u6807\u7b7e\u9875 %d \u00b7 %@"
+  },
+  "Workspace layout": {
+    "zh-Hant": "\u5de5\u4f5c\u5340\u7248\u9762",
+    "zh-Hans": "\u5de5\u4f5c\u533a\u5e03\u5c40"
+  },
+  "Terminal workspace": {
+    "zh-Hant": "\u7d42\u7aef\u5de5\u4f5c\u53f0",
+    "zh-Hans": "\u7ec8\u7aef\u5de5\u4f5c\u53f0"
+  },
+  "Transfer workspace": {
+    "zh-Hant": "\u50b3\u8f38\u5de5\u4f5c\u53f0",
+    "zh-Hans": "\u4f20\u8f93\u5de5\u4f5c\u53f0"
+  },
+  "Files": {
+    "zh-Hant": "\u6a94\u6848",
+    "zh-Hans": "\u6587\u4ef6"
+  },
+  "Quit and reopen MShell to use %@.": {
+    "zh-Hant": "\u7d50\u675f\u4e26\u91cd\u958b MShell \u5f8c\u6703\u5957\u7528\u300c%@\u300d\u3002",
+    "zh-Hans": "\u9000\u51fa\u5e76\u91cd\u65b0\u6253\u5f00 MShell \u540e\u5c06\u5e94\u7528\u300c%@\u300d\u3002"
+  },
+  "Open an SSH tab to browse remote files.": {
+    "zh-Hant": "\u958b\u555f SSH \u9023\u7dda\u5f8c\uff0c\u5c31\u80fd\u5728\u9019\u88e1\u700f\u89bd\u9060\u7aef\u6a94\u6848\u3002",
+    "zh-Hans": "\u6253\u5f00 SSH \u8fde\u63a5\u540e\uff0c\u5c31\u80fd\u5728\u8fd9\u91cc\u6d4f\u89c8\u8fdc\u7a0b\u6587\u4ef6\u3002"
+  },
+  "The server host key has changed. Review its fingerprint before reconnecting.": {
+    "zh-Hant": "\u4e3b\u6a5f\u91d1\u9470\u5df2\u8b8a\u66f4\u3002\u91cd\u65b0\u9023\u7dda\u524d\uff0c\u8acb\u5148\u6838\u5c0d\u6307\u7d0b\u3002",
+    "zh-Hans": "\u4e3b\u673a\u5bc6\u94a5\u5df2\u66f4\u6539\u3002\u91cd\u65b0\u8fde\u63a5\u524d\uff0c\u8bf7\u5148\u6838\u5bf9\u6307\u7eb9\u3002"
+  },
+  "Review host key\u2026": {
+    "zh-Hant": "\u6838\u5c0d\u4e3b\u6a5f\u91d1\u9470\u2026",
+    "zh-Hans": "\u6838\u5bf9\u4e3b\u673a\u5bc6\u94a5\u2026"
+  },
+  "Host key changed": {
+    "zh-Hant": "\u4e3b\u6a5f\u91d1\u9470\u5df2\u8b8a\u66f4",
+    "zh-Hans": "\u4e3b\u673a\u5bc6\u94a5\u5df2\u66f4\u6539"
+  },
+  "Confirm the new fingerprint from the server console or with your administrator before updating the saved key.": {
+    "zh-Hant": "\u8acb\u5f9e\u4f3a\u670d\u5668\u4e3b\u63a7\u53f0\u67e5\u8b49\u65b0\u6307\u7d0b\uff0c\u6216\u8acb\u7ba1\u7406\u54e1\u78ba\u8a8d\uff0c\u518d\u66f4\u65b0\u5df2\u5132\u5b58\u7684\u91d1\u9470\u3002",
+    "zh-Hans": "\u8bf7\u901a\u8fc7\u670d\u52a1\u5668\u63a7\u5236\u53f0\u6216\u7ba1\u7406\u5458\u6838\u5b9e\u65b0\u6307\u7eb9\uff0c\u518d\u66f4\u65b0\u5df2\u4fdd\u5b58\u7684\u5bc6\u94a5\u3002"
+  },
+  "Saved fingerprint": {
+    "zh-Hant": "\u5df2\u5132\u5b58\u7684\u6307\u7d0b",
+    "zh-Hans": "\u5df2\u4fdd\u5b58\u7684\u6307\u7eb9"
+  },
+  "New fingerprint": {
+    "zh-Hant": "\u65b0\u6307\u7d0b",
+    "zh-Hans": "\u65b0\u6307\u7eb9"
+  },
+  "Update key and reconnect": {
+    "zh-Hant": "\u66f4\u65b0\u91d1\u9470\u4e26\u91cd\u65b0\u9023\u7dda",
+    "zh-Hans": "\u66f4\u65b0\u5bc6\u94a5\u5e76\u91cd\u65b0\u8fde\u63a5"
+  },
+  "The saved host key changed during review. Reconnect to check it again.": {
+    "zh-Hant": "\u6838\u5c0d\u671f\u9593\uff0c\u5df2\u5132\u5b58\u7684\u4e3b\u6a5f\u91d1\u9470\u767c\u751f\u8b8a\u66f4\u3002\u8acb\u91cd\u65b0\u9023\u7dda\u518d\u6838\u5c0d\u4e00\u6b21\u3002",
+    "zh-Hans": "\u6838\u5bf9\u671f\u95f4\uff0c\u5df2\u4fdd\u5b58\u7684\u4e3b\u673a\u5bc6\u94a5\u53d1\u751f\u66f4\u6539\u3002\u8bf7\u91cd\u65b0\u8fde\u63a5\u540e\u518d\u6b21\u6838\u5bf9\u3002"
+  },
+  "Connection settings changed. Connect again to review the host key.": {
+    "zh-Hant": "\u9023\u7dda\u8a2d\u5b9a\u5df2\u8b8a\u66f4\u3002\u8acb\u91cd\u65b0\u9023\u7dda\u4ee5\u6838\u5c0d\u4e3b\u6a5f\u91d1\u9470\u3002",
+    "zh-Hans": "\u8fde\u63a5\u8bbe\u7f6e\u5df2\u66f4\u6539\u3002\u8bf7\u91cd\u65b0\u8fde\u63a5\u4ee5\u6838\u5bf9\u4e3b\u673a\u5bc6\u94a5\u3002"
+  },
+  "Drag onto a pane to split it": {
+    "en": "Drag onto a pane to split it",
+    "zh-Hant": "\u62d6\u5230\u756b\u9762\u908a\u7de3\u5373\u53ef\u5206\u5272",
+    "zh-Hans": "\u62d6\u5230\u753b\u9762\u8fb9\u7f18\u5373\u53ef\u5206\u5c4f"
+  },
+  "Hide connection tree": {
+    "en": "Hide connection tree",
+    "zh-Hant": "\u6536\u8d77\u9023\u7dda\u6a39",
+    "zh-Hans": "\u6536\u8d77\u8fde\u63a5\u6811"
+  },
+  "Show connection tree": {
+    "en": "Show connection tree",
+    "zh-Hant": "\u5c55\u958b\u9023\u7dda\u6a39",
+    "zh-Hans": "\u5c55\u5f00\u8fde\u63a5\u6811"
+  },
+  "Replace the remote file?": {
+    "en": "Replace the remote file?",
+    "zh-Hant": "\u8981\u53d6\u4ee3\u9060\u7aef\u6a94\u6848\u55ce\uff1f",
+    "zh-Hans": "\u8981\u66ff\u6362\u8fdc\u7aef\u6587\u4ef6\u5417\uff1f"
+  },
+  "Replace": {
+    "en": "Replace",
+    "zh-Hant": "\u53d6\u4ee3",
+    "zh-Hans": "\u66ff\u6362"
+  },
+  "%@ already exists in %@. Uploading replaces it.": {
+    "en": "%@ already exists in %@. Uploading replaces it.",
+    "zh-Hant": "%@ \u5df2\u5b58\u5728\u65bc %@\uff0c\u4e0a\u50b3\u6703\u53d6\u4ee3\u5b83\u3002",
+    "zh-Hans": "%@ \u5df2\u5b58\u5728\u4e8e %@\uff0c\u4e0a\u4f20\u4f1a\u66ff\u6362\u5b83\u3002"
+  },
+  "Disconnect and close this session": {
+    "en": "Disconnect and close this session",
+    "zh-Hant": "\u4e2d\u65b7\u9023\u7dda\u4e26\u95dc\u9589\u9019\u500b\u5de5\u4f5c\u5340",
+    "zh-Hans": "\u65ad\u5f00\u8fde\u63a5\u5e76\u5173\u95ed\u8fd9\u4e2a\u5de5\u4f5c\u533a"
+  },
+  "Drag a pane header here to make it a separate tab": {
+    "en": "Drag a pane header here to make it a separate tab",
+    "zh-Hant": "\u628a\u683c\u5b50\u7684\u6a19\u982d\u62d6\u5230\u9019\u88e1\uff0c\u5c31\u80fd\u62c6\u6210\u7368\u7acb\u5206\u9801",
+    "zh-Hans": "\u628a\u683c\u5b50\u7684\u6807\u9898\u680f\u62d6\u5230\u8fd9\u91cc\uff0c\u5c31\u80fd\u62c6\u6210\u72ec\u7acb\u6807\u7b7e\u9875"
+  },
+  "no extension": {
+    "en": "no extension",
+    "zh-Hant": "\u7121\u526f\u6a94\u540d",
+    "zh-Hans": "\u65e0\u6269\u5c55\u540d"
+  },
+  "The extension changes from %@ to %@.": {
+    "en": "The extension changes from %@ to %@.",
+    "zh-Hant": "\u526f\u6a94\u540d\u6703\u5f9e %@ \u6539\u6210 %@\u3002",
+    "zh-Hans": "\u6269\u5c55\u540d\u4f1a\u4ece %@ \u6539\u6210 %@\u3002"
+  },
+  "Change the file extension?": {
+    "en": "Change the file extension?",
+    "zh-Hant": "\u8981\u66f4\u6539\u526f\u6a94\u540d\u55ce\uff1f",
+    "zh-Hans": "\u8981\u66f4\u6539\u6269\u5c55\u540d\u5417\uff1f"
+  },
+  "The file may open in a different app or stop opening.": {
+    "en": "The file may open in a different app or stop opening.",
+    "zh-Hant": "\u6a94\u6848\u53ef\u80fd\u6703\u6539\u7528\u5176\u4ed6 App \u958b\u555f\uff0c\u6216\u7121\u6cd5\u958b\u555f\u3002",
+    "zh-Hans": "\u6587\u4ef6\u53ef\u80fd\u4f1a\u6539\u7528\u5176\u4ed6 App \u6253\u5f00\uff0c\u6216\u65e0\u6cd5\u6253\u5f00\u3002"
+  },
+  "Keep %@": {
+    "en": "Keep %@",
+    "zh-Hant": "\u4fdd\u7559 %@",
+    "zh-Hans": "\u4fdd\u7559 %@"
+  },
+  "Use %@": {
+    "en": "Use %@",
+    "zh-Hant": "\u4f7f\u7528 %@",
+    "zh-Hans": "\u4f7f\u7528 %@"
   }
 }

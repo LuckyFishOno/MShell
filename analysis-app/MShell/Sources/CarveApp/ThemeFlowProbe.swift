@@ -21,7 +21,7 @@ enum ThemeFlowProbe {
         try model.selectTheme(selected)
         func snapshot() -> [String: Any] {
             let persisted = (try? Data(contentsOf: directory.appendingPathComponent("appearance.json"))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] }
-            return ["activeTheme": model.displayedThemeID, "savedTheme": persisted?["selectedID"] ?? "mshell", "open": model.themePreview != nil, "pendingTheme": model.themePreview?.pendingID as Any? ?? NSNull()]
+            return ["activeTheme": model.displayedThemeID, "savedTheme": persisted?["selectedID"] ?? WorkspaceTheme.native.id, "open": model.themePreview != nil, "pendingTheme": model.themePreview?.pendingID as Any? ?? NSNull()]
         }
         var states = [snapshot()]
         for step in steps {

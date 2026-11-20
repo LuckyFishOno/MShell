@@ -10,13 +10,64 @@ import Foundation
     }
     func testCatalogUsesPinnedStandaloneAssetsAndResolvesInheritedColors() throws {
         let themes = try ThemeCatalog.bundled()
-        XCTAssertEqual(themes.count, 18)
+        XCTAssertEqual(themes.count, 72)
         let modern = try XCTUnwrap(themes.first { $0.id == "Dark Modern" })
         XCTAssertEqual(modern.background, ThemeColor(hex: "#1f1f1f"))
         XCTAssertEqual(modern.sidebar, ThemeColor(hex: "#181818"))
         XCTAssertEqual(modern.colors["editor.inactiveSelectionBackground"], ThemeColor(hex: "#3a3d41"))
         for theme in themes { for index in 0..<16 { XCTAssertTrue((0...1).contains(theme.terminalANSI(index).red)) } }
         XCTAssertFalse(try XCTUnwrap(themes.first { $0.id == "Light Modern" }).isDark)
+    }
+    func testLinuxPresetsUseTheirSourceTerminalPalettes() throws {
+        let themes = try ThemeCatalog.bundled()
+        func theme(_ id: String) throws -> WorkspaceTheme { try XCTUnwrap(themes.first { $0.id == id }) }
+        let ubuntu = try theme("ubuntu")
+        XCTAssertEqual(ubuntu.terminalBackground, ThemeColor(hex: "#300A24"))
+        XCTAssertEqual(ubuntu.terminalANSI(1), ThemeColor(hex: "#CC0000"))
+        XCTAssertEqual(ubuntu.terminalANSI(15), ThemeColor(hex: "#EEEEEC"))
+        let kali = try theme("kali-dark")
+        XCTAssertEqual(kali.terminalBackground, ThemeColor(hex: "#23252E"))
+        XCTAssertEqual(kali.terminalANSI(4), ThemeColor(hex: "#367BF0"))
+        XCTAssertEqual(kali.terminalANSI(8), ThemeColor(hex: "#198388"))
+        XCTAssertEqual(try theme("gnome-dark").terminalANSI(0), ThemeColor(hex: "#241F31"))
+        XCTAssertFalse(try theme("gnome-light").isDark)
+        XCTAssertEqual(try theme("breeze").terminalANSI(12), ThemeColor(hex: "#3DAEE9"))
+        XCTAssertEqual(try theme("tango").terminalANSI(0), ThemeColor(hex: "#000000"))
+        let console = try theme("linux-console")
+        let vga = ["000000", "AA0000", "00AA00", "AA5500", "0000AA", "AA00AA", "00AAAA", "AAAAAA",
+                   "555555", "FF5555", "55FF55", "FFFF55", "5555FF", "FF55FF", "55FFFF", "FFFFFF"]
+        for (index, hex) in vga.enumerated() { XCTAssertEqual(console.terminalANSI(index), ThemeColor(hex: "#" + hex)) }
+        for preset in WorkspaceTheme.linuxPresets {
+            for index in 0..<16 { XCTAssertNotNil(preset.colors["terminal.ansi" + WorkspaceTheme.ansiKeys[index]], "\(preset.id) \(index)") }
+        }
+    }
+    func testPopularVisualStudioCodeThemesAreBundledWithVisibleAccents() throws {
+        let themes = try ThemeCatalog.bundled()
+        func theme(_ id: String) throws -> WorkspaceTheme { try XCTUnwrap(themes.first { $0.id == id }, id) }
+        for id in ["GitHub Dark Default", "One Dark Pro", "Dracula Theme", "Tokyo Night", "Catppuccin Mocha", "Nord",
+                   "Gruvbox Dark Medium", "Solarized Dark", "Monokai", "Catppuccin Latte"] {
+            _ = try theme(id)
+        }
+        XCTAssertEqual(try theme("Dracula Theme").background, ThemeColor(hex: "#282A36"))
+        XCTAssertEqual(try theme("Nord").terminalANSI(1), ThemeColor(hex: "#bf616a"))
+        XCTAssertFalse(try theme("Catppuccin Latte").isDark)
+        XCTAssertEqual(try theme("Tokyo Night").accent, ThemeColor(hex: "#3d59a1dd"))
+        XCTAssertNil(themes.first { $0.id.hasPrefix("Bearded") })
+        for theme in themes { XCTAssertGreaterThanOrEqual(theme.accent.alpha, 0.5, theme.id) }
+        let text = try ThemeCatalog.licenseNotices()
+        XCTAssertTrue(text.contains("Microsoft Corporation"))
+        for id in ["dracula-theme.theme-dracula", "Catppuccin.catppuccin-vsc", "GitHub.github-vscode-theme"] { XCTAssertTrue(text.contains(id), id) }
+    }
+    func testGallerySearchFiltersAFlatListAndTheOldMShellThemeIsGone() throws {
+        let themes = try ThemeCatalog.bundled()
+        XCTAssertEqual(ThemeSearch.filter(themes, matching: "").map(\.id), themes.map(\.id))
+        XCTAssertEqual(ThemeSearch.filter(themes, matching: "tokyo night").map(\.id),
+                       ["Tokyo Night", "Tokyo Night Storm", "Tokyo Night Light"])
+        XCTAssertEqual(ThemeSearch.filter(themes, matching: "gnome").map(\.id), ["gnome-dark", "gnome-light"])
+        XCTAssertTrue(ThemeSearch.filter(themes, matching: "no-such-theme").isEmpty)
+        XCTAssertNil(themes.first { $0.id == "mshell" })
+        XCTAssertEqual(themes.first?.id, WorkspaceTheme.native.id)
+        XCTAssertEqual(WorkspaceTheme.native.id, "midnight")
     }
     func testPresetPreviewAppliesWorkspaceAndTerminalColorsTogether() throws {
         let storage = try directory()
@@ -74,15 +125,15 @@ import Foundation
         let storage = try directory(), model = try WorkspaceModel(storage: storage)
         model.beginThemePreview(); try model.focusThemePreview("Light Modern", schedule: false); model.advanceThemePreview(milliseconds: 200)
         try FileManager.default.createDirectory(at: storage.appendingPathComponent("appearance.json"), withIntermediateDirectories: false)
-        XCTAssertThrowsError(try model.applyThemePreview()); XCTAssertEqual(model.themeID, "mshell")
+        XCTAssertThrowsError(try model.applyThemePreview()); XCTAssertEqual(model.themeID, WorkspaceTheme.native.id)
         XCTAssertEqual(model.displayedThemeID, "Light Modern"); XCTAssertNotNil(model.themePreview)
-        model.cancelThemePreview(); XCTAssertEqual(model.displayedThemeID, "mshell")
+        model.cancelThemePreview(); XCTAssertEqual(model.displayedThemeID, WorkspaceTheme.native.id)
     }
     func testCancelledRealTimerCannotApplyAfterPreferencesClose() async throws {
         let model = try WorkspaceModel(storage: directory()); model.beginThemePreview()
         try model.focusThemePreview("Light Modern"); model.cancelThemePreview()
         try await Task.sleep(nanoseconds: 250_000_000)
-        XCTAssertEqual(model.displayedThemeID, "mshell"); XCTAssertNil(model.themePreview)
+        XCTAssertEqual(model.displayedThemeID, WorkspaceTheme.native.id); XCTAssertNil(model.themePreview)
     }
     func testEveryThemePersistsWithoutReplacingSessionStateOrConnecting() throws {
         let storage = try directory(), model = try WorkspaceModel(storage: storage)
@@ -100,17 +151,17 @@ import Foundation
     }
     func testMissingAndStaleThemePreferencesFallBackToNativeWithoutRewriting() throws {
         let storage = try directory(), file = storage.appendingPathComponent("appearance.json")
-        XCTAssertEqual(try WorkspaceModel(storage: storage).themeID, "mshell")
-        for contents in ["broken", "{\"selectedID\":\"removed-theme\"}"] {
+        XCTAssertEqual(try WorkspaceModel(storage: storage).themeID, WorkspaceTheme.native.id)
+        for contents in ["broken", "{\"selectedID\":\"removed-theme\"}", "{\"selectedID\":\"mshell\"}"] {
             try Data(contents.utf8).write(to: file)
-            XCTAssertEqual(try WorkspaceModel(storage: storage).themeID, "mshell")
+            XCTAssertEqual(try WorkspaceModel(storage: storage).themeID, WorkspaceTheme.native.id)
             XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), contents)
         }
     }
     func testFailedPersistenceDoesNotChangeActiveTheme() throws {
         let storage = try directory(), model = try WorkspaceModel(storage: storage)
         try FileManager.default.createDirectory(at: storage.appendingPathComponent("appearance.json"), withIntermediateDirectories: false)
-        XCTAssertThrowsError(try model.selectTheme("Dark Modern")); XCTAssertEqual(model.themeID, "mshell")
+        XCTAssertThrowsError(try model.selectTheme("Dark Modern")); XCTAssertEqual(model.themeID, WorkspaceTheme.native.id)
     }
     func testThemeSwitchKeepsAnActiveLocalPTYAndItsTranscript() async throws {
         let model = try WorkspaceModel(storage: directory()), tab = model.addLocalTab()

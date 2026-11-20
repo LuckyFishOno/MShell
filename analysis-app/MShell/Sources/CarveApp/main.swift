@@ -4,6 +4,7 @@ import AppKit
 import App
 
 let arguments = Array(CommandLine.arguments.dropFirst())
+if arguments.first == "layout" { exit(LayoutCommand.run(arguments)) }
 if arguments.contains("--theme-flow-trace") { ThemeFlowProbe.start() }
 if arguments.contains("--verify-ssh") { SSHProbe.start(arguments) }
 if CarveCommand.handles(arguments) { exit(CarveCommand.run(arguments)) }
@@ -13,6 +14,7 @@ struct MShellApplication: SwiftUI.App {
     @StateObject private var store = ApplicationWorkspace()
     var body: some Scene {
         Window("MShell", id: "workspace") { WorkspaceWindow(store: store) }.defaultSize(width: 1320, height: 840)
+            .windowToolbarStyle(.unified(showsTitle: false))
             .commands {
                 CommandGroup(replacing: .appSettings) {
                     if let workspace = store.workspace { PreferencesMenuLink(model: workspace) }

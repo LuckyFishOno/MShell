@@ -7,7 +7,7 @@ public enum WorkspaceError: Error, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalid(let message): return message
-        case .changedHostKey(let endpoint): return "The host key for \(endpoint) has changed. Connection refused. Verify the server before updating known-hosts.json."
+        case .changedHostKey(let endpoint): return "The host key for \(endpoint) has changed. Verify the server before reconnecting."
         case .rejectedHostKey: return "Host key was not approved."
         case .disconnected: return "The session is disconnected."
         case .alreadyExists(let name): return "\(name) already exists. Confirm replacement before uploading."
@@ -42,6 +42,19 @@ func writePrivate(_ data: Data, to url: URL) throws {
     }
     public func trust(endpoint: String, key: String) throws {
         _ = try isTrusted(endpoint: endpoint, key: key)
+        try store(endpoint: endpoint, key: key)
+    }
+    func trustedKey(for endpoint: String) -> String? { keys[endpoint] }
+
+    func replace(endpoint: String, expectedKey: String, with newKey: String) throws {
+        guard keys[endpoint] == expectedKey else {
+            throw WorkspaceError.invalid("The saved host key changed during review. Reconnect to check it again.")
+        }
+        _ = try Self.fingerprint(newKey)
+        try store(endpoint: endpoint, key: newKey)
+    }
+
+    private func store(endpoint: String, key: String) throws {
         var updated = keys; updated[endpoint] = key
         try writePrivate(JSONEncoder().encode(updated), to: url)
         keys = updated
@@ -73,6 +86,10 @@ public actor CredentialVault {
         sessionPasswords[id] = password
     }
     public func forgetForSession(id: String) { sessionPasswords.removeValue(forKey: id) }
+    func forgetForSession(id: String, matching password: String, generation: UUID) {
+        guard generation == sessionGeneration, sessionPasswords[id] == password else { return }
+        forgetForSession(id: id)
+    }
     public func save(id: String, password: String) throws {
         guard let vault else { throw VaultError.locked }
         let updated = try vault.storing(id: id, secret: password, overwrite: true)
