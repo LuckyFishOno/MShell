@@ -7,8 +7,8 @@
 /AGENTS.md
 /CLAUDE.md
 .carve-check/
-/analysis-app/MShell/SKELETON.md
-/analysis-app/MShell/carve-skeleton.json
+/MShell/SKELETON.md
+/MShell/carve-skeleton.json
 
 # SwiftPM, Xcode, and app build output
 .build/
