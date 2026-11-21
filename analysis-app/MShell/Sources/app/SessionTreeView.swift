@@ -8,6 +8,7 @@ struct SessionTreeView: View {
     @State private var deleting: SessionTreeNode?
     @State private var connectionEditor: ConnectionEditRequest?
     var importFolder: () -> Void = {}
+    var importOpenSSH: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -18,6 +19,7 @@ struct SessionTreeView: View {
                     Button(T("New folder…")) { edit(.folder, parent: store.destination) }
                     Button(T("New saved session…")) { connectionEditor = ConnectionEditRequest(parent: store.destination) }
                     Button(T("Import Xshell folder…"), action: importFolder)
+                    Button(T("Import OpenSSH config…"), action: importOpenSSH)
                     Button(T("Save current connection…")) { saveCurrent() }.disabled(model.selected?.isLocal != false)
                     Divider()
                     Button(T("Expand all")) { perform { try store.expandAll(true) } }
@@ -47,7 +49,7 @@ struct SessionTreeView: View {
             }.frame(minHeight: 120, maxHeight: .infinity)
         }
         .sheet(item: $connectionEditor) { request in
-            ConnectionEditor(store: store, item: request.item, parent: request.parent)
+            ConnectionEditor(store: store, item: request.item, parent: request.parent, model: model)
         }
         .sheet(item: $editor) { current in
             VStack(alignment: .leading, spacing: 16) {

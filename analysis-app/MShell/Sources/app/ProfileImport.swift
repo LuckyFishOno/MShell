@@ -8,6 +8,8 @@ struct ProfileImport: Sendable {
         let name: String
         let connection: SavedConnection
         let notes: [String]
+        /// The components of another entry in the same import that this one reaches through as its jump host.
+        var jump: [String]? = nil
         var path: String { components.joined(separator: " / ") }
     }
 

@@ -8,6 +8,7 @@ import Profiles
 import Formats
 import Highlight
 import MasterPassword
+import LocalAuthentication
 
 public struct HostKeyPrompt: Identifiable {
     public let id = UUID()
@@ -35,7 +36,9 @@ struct HostKeyChange: Identifiable {
     var pendingJump: SSHSession?
     var disconnectWatcher: Task<Void, Never>?
     @Published var forwards: [SessionForward] = []
-    var forwardStarts = 0
+    @Published var forwardingRules: [ForwardingRule] = []
+    @Published var forwardingErrors: [String] = []
+    var forwardStarts: Set<UUID> = []
     var savedConnectionTask: Task<Void, Never>?
     @Published public var title = "New connection"
     @Published public var host = ""
@@ -43,10 +46,14 @@ struct HostKeyChange: Identifiable {
     @Published public var username = ""
     @Published public var password = ""
     @Published var identityPath: String?
+    @Published var useAgent = false
+    var agentSocket: String?
+    var confirmsEachConnection = true
     @Published var keyPassphrase = ""
     @Published var showsFiles = false
     @Published public internal(set) var filesLoaded = false
     @Published public var useProxy = false
+    @Published public var proxyKind: ProxyKind = .socks5
     @Published public var proxyHost = "127.0.0.1"
     @Published public var proxyPort = "1080"
     @Published public var status = "Disconnected"
@@ -95,13 +102,13 @@ struct HostKeyChange: Identifiable {
 }
 
 @MainActor public final class WorkspaceModel: ObservableObject {
-    public let layout: WorkspaceLayout
-    @Published private(set) var preferredLayout: WorkspaceLayout
+    /// The window arrangement: macOS, Xshell-style, or MobaXterm-style. It applies at once and is remembered.
+    @Published public private(set) var layout: WorkspaceLayout
     private let storage: URL
 
     func selectLayout(_ layout: WorkspaceLayout) throws {
         try layout.save(to: storage)
-        preferredLayout = layout
+        self.layout = layout
     }
 
     @Published public private(set) var themeID = WorkspaceTheme.native.id
@@ -177,6 +184,18 @@ struct HostKeyChange: Identifiable {
     @Published private(set) var broadcastInput = false
     @Published public var vaultState = "Not configured"
     @Published public var vaultBusy = false
+    @Published var vaultHasTouchID = false
+    /// Passwords are saved on this Mac without unlocking the vault (any Mac with a Secure Enclave).
+    @Published var savesWithoutUnlock = false
+    /// Accounts and key passphrases that have a copy in the vault, for the "In vault" mark in the form.
+    @Published var vaultEntries: Set<String> = []
+    /// Stands in for the vault's Touch ID unlock in tests, which cannot answer the system prompt.
+    /// Confirms the Mac's owner before a session marked to ask every time. Tests replace it.
+    var confirmOwner: (String) async throws -> Void = { reason in
+        // Under XCTest no one can answer the system prompt; tests that check the prompt set their own closure.
+        if NSClassFromString("XCTestCase") != nil { return }
+        try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+    }
     @Published public var error: String?
     public let sessionTree: SessionTreeStore
     let quickCommands: QuickCommandStore
@@ -189,10 +208,10 @@ struct HostKeyChange: Identifiable {
     }
     public init(storage: URL? = nil) throws {
         let storage = (storage ?? Self.defaultStorage).standardizedFileURL
+        if storage == Self.defaultStorage.standardizedFileURL || AppSSHKey.directory == nil { AppSSHKey.directory = storage }
         self.storage = storage
         let layout = (try? WorkspaceLayout.load(from: storage)) ?? .native
         self.layout = layout
-        preferredLayout = layout
         themes = try ThemeCatalog.bundled()
         themePreferencesURL = storage.appendingPathComponent("appearance.json")
         if let data = try? Data(contentsOf: themePreferencesURL), let preference = try? JSONDecoder().decode(ThemePreference.self, from: data), themes.contains(where: { $0.id == preference.selectedID }) {
@@ -201,7 +220,8 @@ struct HostKeyChange: Identifiable {
         sessionTree = try SessionTreeStore(url: storage.appendingPathComponent("sessions.json"))
         quickCommands = QuickCommandStore(url: storage.appendingPathComponent("quick-commands.json"))
         knownHosts = try KnownHosts(url: storage.appendingPathComponent("known-hosts.json"))
-        vault = try CredentialVault(url: storage.appendingPathComponent("password-vault.json"))
+        vault = try CredentialVault(url: storage.appendingPathComponent("password-vault.json"),
+                                    deviceSecrets: storage.appendingPathComponent("saved-sign-ins.json"))
         selection = tabs[0].id
     }
     public var selected: SessionTab? { tabs.first { $0.id == selection } }
@@ -215,13 +235,18 @@ struct HostKeyChange: Identifiable {
     /// Splits the selected pane. The new pane shows the most recent tab that is not already visible,
     /// or a new local terminal. Focus stays on the pane that was split.
     func splitWorkspace(_ axis: WorkspaceSplitAxis) {
-        guard let active = selected else { return }
+        guard let active = selected, canSplit(active.id) else { return }
         let grouped = Set(groups.flatMap(\.tabIDs)).union([active.id])
-        let added = tabs.last(where: { !grouped.contains($0.id) }) ?? addLocalTab(select: false)
+        let added = tabs.last(where: { !grouped.contains($0.id) && canSplit($0.id) }) ?? addLocalTab(select: false)
         setGroup(containing: active.id, to: split?.splitting(active.id, axis: axis, adding: added.id)
             ?? WorkspaceSplit(axis: axis, first: active.id, second: added.id))
         maximizedPane = nil
         selectTab(active.id)
+    }
+
+    /// Only connected sessions and local terminals share the screen; a tab still showing its sign-in form does not.
+    func canSplit(_ id: UUID?) -> Bool {
+        tabs.first { $0.id == id }.map { $0.connected || $0.isLocal } ?? false
     }
 
     /// Ungroups the split on screen; its panes become separate tabs again.
@@ -242,7 +267,7 @@ struct HostKeyChange: Identifiable {
     /// dragged tab in that pane, swapping places when both are already visible. Dragging a visible
     /// pane to another edge moves it.
     func placeTab(_ dragged: UUID, at edge: PaneDropEdge, of target: UUID) {
-        guard dragged != target, tabs.contains(where: { $0.id == dragged }), tabs.contains(where: { $0.id == target }) else { return }
+        guard dragged != target, canSplit(dragged), canSplit(target) else { return }
         var root = group(containing: target)?.root ?? .tab(target)
         if !root.contains(dragged), let source = group(containing: dragged) {
             // Leaving another group: that group keeps its other panes.
@@ -352,7 +377,8 @@ struct HostKeyChange: Identifiable {
         tab.disconnectWatcher = nil
         let forwards = tab.forwards
         tab.forwards = []
-        tab.forwardStarts = 0
+        tab.forwardStarts.removeAll()
+        tab.forwardingErrors = []
         tab.resizeTask?.cancel(); tab.resizeTask = nil
         tab.shellOutput?.cancel(); tab.inputTask?.cancel(); tab.shellOutput = nil; tab.inputTask = nil
         tab.shell = nil; tab.terminalReady = false; tab.terminalStarting = false; tab.pendingInput = []; tab.pendingInputBytes = 0
@@ -386,6 +412,10 @@ struct HostKeyChange: Identifiable {
         guard !tab.busy, !tab.connected else { return }
         tab.error = nil
         tab.hostKeyChange = nil
+        tab.forwardingErrors = []
+        if let id = tab.savedSessionID {
+            tab.forwardingRules = sessionTree.node(id)?.connection?.forwardingRules ?? []
+        }
         let host = tab.host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let port = Int(tab.port), (1...65535).contains(port), !host.isEmpty, !tab.username.isEmpty,
               !tab.useProxy || (!tab.proxyHost.isEmpty && Int(tab.proxyPort).map { (1...65535).contains($0) } == true) else {
@@ -394,18 +424,15 @@ struct HostKeyChange: Identifiable {
         }
         let target = SavedConnection(host: host, port: port, username: tab.username, proxyHost: tab.useProxy ? tab.proxyHost : nil,
                                      proxyPort: tab.useProxy ? Int(tab.proxyPort) : nil, identityPath: tab.identityPath,
-                                     jumpSessionID: tab.jumpSessionID)
-        let jump: SavedConnection?
+                                     jumpSessionID: tab.jumpSessionID, usesAgent: tab.useAgent, agentSocket: tab.agentSocket,
+                                     proxyKind: tab.proxyKind, confirmsEachConnection: tab.confirmsEachConnection)
+        let hops: [SavedConnection]
         do {
             try target.validate()
-            if let id = target.jumpSessionID {
-                guard id != tab.savedSessionID, let saved = sessionTree.node(id)?.connection, saved.jumpSessionID == nil else {
-                    throw WorkspaceError.invalid("Choose an available jump host in Connection settings.")
-                }
-                jump = saved
-            } else {
-                jump = nil
+            guard let chain = sessionTree.jumpChain(for: target, excluding: tab.savedSessionID) else {
+                throw WorkspaceError.invalid("Choose an available jump host in Connection settings.")
             }
+            hops = chain
         } catch {
             tab.error = message(for: error)
             return
@@ -417,19 +444,53 @@ struct HostKeyChange: Identifiable {
         tab.epoch = epoch
         tab.busy = true
         tab.status = "Connecting…"
-        let secret = tab.identityPath == nil ? tab.password : tab.keyPassphrase
+        let secret = tab.identityPath == nil ? (tab.useAgent ? "" : tab.password) : tab.keyPassphrase
         let jumpSecret = tab.jumpSecret
         tab.password = ""; tab.keyPassphrase = ""; tab.jumpSecret = ""
-        var openingJump = false
+        var openingJump: SavedConnection?
         defer { if tab.epoch == epoch { tab.busy = false } }
         do {
-            if let jump {
-                openingJump = true
+            // An unlocked password vault already confirmed the owner for this launch, so it does not ask per connection.
+            // While it is locked, a session marked to ask on every connection asks: Touch ID or the Mac password.
+            let vaultUnlocked = await vault.state == "Unlocked"
+            let asks = !vaultUnlocked
+                && ((target.asksEachConnection && secret.isEmpty) || hops.contains(where: \.asksEachConnection))
+            let reason = String(format: T("connect to %@"), "\(target.username)@\(host)")
+            var confirmed = false
+            // A password that only the locked vault holds is read with Touch ID for this one connection. That prompt is
+            // also the per-connection check; the vault stays locked.
+            if !vaultUnlocked, await vault.touchIDEnrolled {
+                let accounts = (secret.isEmpty ? [target] : []) + hops
+                let needed = Set(accounts.flatMap { connection in
+                    ["\(connection.username)@\(KnownHosts.endpoint(host: connection.host, port: connection.port))"]
+                        + (connection.identityPath.map { [Self.passphraseID($0)] } ?? [])
+                })
+                let locked = await vault.lockedVaultIDs(needed)
+                if !locked.isEmpty {
+                    tab.status = "Waiting for Touch ID…"
+                    try await vault.readWithTouchID(ids: locked, reason: reason)
+                    guard tab.epoch == epoch else { return }
+                    confirmed = true
+                    tab.status = "Connecting…"
+                }
+            }
+            if asks, !confirmed {
+                tab.status = "Waiting for Touch ID…"
+                do { try await confirmOwner(reason) }
+                catch { throw WorkspaceError.invalid("This session asks for Touch ID or the Mac password before it connects.") }
+                guard tab.epoch == epoch else { return }
+                tab.status = "Connecting…"
+            }
+            // Each hop is reached through the one before it. The typed jump secret belongs to the host the
+            // destination is reached from; earlier hops use their key or the password remembered for this session.
+            for (index, hop) in hops.enumerated() {
+                openingJump = hop
                 tab.status = "Connecting to jump host…"
-                let server = try await establish(jump, secret: jumpSecret, tab: tab, epoch: epoch)
+                let server = try await establish(hop, secret: index == hops.count - 1 ? jumpSecret : "", tab: tab,
+                                                 epoch: epoch, via: tab.pendingJump)
                 guard tab.epoch == epoch else { try? await server.close(); return }
                 tab.pendingJump = server
-                openingJump = false
+                openingJump = nil
                 tab.status = "Connecting…"
             }
             let ssh = try await establish(target, secret: secret, tab: tab, epoch: epoch, via: tab.pendingJump)
@@ -445,6 +506,7 @@ struct HostKeyChange: Identifiable {
                 guard !Task.isCancelled, let self, let tab, tab.epoch == epoch else { return }
                 await self.endConnection(tab, lost: true)
             }
+            await startSavedForwards(tab, epoch: epoch)
         } catch {
             guard tab.epoch == epoch else { return }
             let server = tab.pendingJump
@@ -452,7 +514,12 @@ struct HostKeyChange: Identifiable {
             answerHostKey(tab, approve: false)
             tab.status = "Connection failed"
             let detail = tab.error ?? message(for: error)
-            tab.error = openingJump ? String(format: T("Jump host: %@"), T(detail)) : detail
+            if let hop = openingJump {
+                let label = hops.count > 1 ? "\(hop.host) – " + T(detail) : T(detail)
+                tab.error = String(format: T("Jump host: %@"), label)
+            } else {
+                tab.error = detail
+            }
             try? await server?.close()
         }
     }
@@ -465,10 +532,23 @@ struct HostKeyChange: Identifiable {
         let credentialGeneration = await vault.sessionGeneration
         let credential: SSHCredential
         let password: String?
-        if let path = configuration.identityPath {
-            credential = try await Task.detached(priority: .userInitiated) {
-                try SSHCredential.openSSHEd25519(at: URL(fileURLWithPath: path), passphrase: secret)
+        var keySecret: (id: String, value: String)?
+        if configuration.usesKeys {
+            var agent: SSHAgentClient?
+            if configuration.usesAgent == true {
+                agent = configuration.agentSocket.map { SSHAgentClient(socketPath: $0) } ?? SSHAgentClient.environment()
+                if agent == nil && configuration.identityPath == nil { throw SSHAgentError.unavailable }
+            }
+            let file = configuration.identityPath.map { URL(fileURLWithPath: $0) }
+            // A passphrase typed once is kept in the vault under the key's path.
+            var passphrase = secret
+            if passphrase.isEmpty, let path = configuration.identityPath {
+                passphrase = (try? await vault.password(id: Self.passphraseID(path))) ?? ""
+            }
+            credential = try await Task.detached(priority: .userInitiated) { [agent, passphrase] in
+                try SSHCredential.keys(agent: agent, identityFile: file, passphrase: passphrase)
             }.value
+            keySecret = configuration.identityPath.map { (Self.passphraseID($0), passphrase) }
             password = nil
         } else {
             let value = secret.isEmpty ? try await vault.password(id: id) : secret
@@ -485,17 +565,15 @@ struct HostKeyChange: Identifiable {
             if let jump {
                 ssh = try await SSHSession.connect(settings: settings, credential: credential, via: jump, hostKey: policy)
             } else {
-                let proxy: ProxyConfiguration
-                if let host = configuration.proxyHost, let port = configuration.proxyPort {
-                    proxy = ProxyConfiguration(kind: .socks5, host: host, port: port)
-                } else {
-                    proxy = .direct
-                }
-                ssh = try await SSHSession.connect(settings: settings, credential: credential, proxy: proxy, hostKey: policy)
+                ssh = try await SSHSession.connect(settings: settings, credential: credential, proxy: configuration.proxy, hostKey: policy)
             }
             if tab.epoch == epoch, let password {
-                await vault.rememberForSession(id: id, password: password, generation: credentialGeneration)
+                await vault.rememberWorking(id: id, secret: password, generation: credentialGeneration)
             }
+            if tab.epoch == epoch, let keySecret {
+                await vault.rememberWorking(id: keySecret.id, secret: keySecret.value, generation: credentialGeneration)
+            }
+            await refreshVault()
             return ssh
         } catch SSHError.authenticationFailed {
             guard let password else {
@@ -507,6 +585,9 @@ struct HostKeyChange: Identifiable {
             throw SSHError.authenticationFailed
         }
     }
+
+    /// The vault entry that holds a private key's passphrase.
+    static func passphraseID(_ path: String) -> String { "passphrase:" + path }
 
     private func confirmKey(_ tab: SessionTab, endpoint: String, key: String, epoch: UUID) async throws {
         guard tab.epoch == epoch else { throw WorkspaceError.rejectedHostKey }
@@ -538,8 +619,10 @@ struct HostKeyChange: Identifiable {
         guard !tab.busy, !tab.connected, tab.hostKeyChange?.id == change.id else { return }
         let host = tab.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let target = Int(tab.port).map { KnownHosts.endpoint(host: host, port: $0) }
-        let jump = sessionTree.node(tab.jumpSessionID)?.connection.map { KnownHosts.endpoint(host: $0.host, port: $0.port) }
-        guard change.endpoint == target || change.endpoint == jump else {
+        let probe = SavedConnection(host: host, port: Int(tab.port) ?? 22, username: tab.username, jumpSessionID: tab.jumpSessionID)
+        let jumps = (sessionTree.jumpChain(for: probe, excluding: tab.savedSessionID) ?? [])
+            .map { KnownHosts.endpoint(host: $0.host, port: $0.port) }
+        guard change.endpoint == target || jumps.contains(change.endpoint) else {
             tab.hostKeyChange = nil
             tab.error = "Connection settings changed. Connect again to review the host key."
             return
@@ -578,6 +661,12 @@ struct HostKeyChange: Identifiable {
                     tab.inputTask?.cancel(); tab.inputTask = nil
                     tab.pendingInput.removeAll(); tab.pendingInputBytes = 0
                     tab.terminalReady = false; tab.shell = nil; tab.status = "Shell closed"
+                    // `exit` or `logout` ends the session like a terminal app: the tab goes away. A shell that
+                    // stops without an exit status (the connection dropped) keeps the tab for Reconnect.
+                    if shell.exitStatus != nil, tab.error == nil, !Task.isCancelled {
+                        tab.shellOutput = nil
+                        await self?.disconnectAndClose(tab)
+                    }
                 }
             }
         } catch { if tab.epoch == epoch { tab.error = message(for: error) } }
@@ -715,9 +804,13 @@ struct HostKeyChange: Identifiable {
         tab.savedSessionID = item.id
         tab.jumpSessionID = settings.jumpSessionID
         tab.title = item.name; tab.host = settings.host; tab.port = String(settings.port); tab.username = settings.username
-        tab.useProxy = settings.proxyHost != nil; tab.proxyHost = settings.proxyHost ?? "127.0.0.1"; tab.proxyPort = String(settings.proxyPort ?? 1080)
+        tab.useProxy = settings.proxyHost != nil; tab.proxyKind = settings.proxyKind ?? .socks5; tab.proxyHost = settings.proxyHost ?? "127.0.0.1"; tab.proxyPort = String(settings.proxyPort ?? 1080)
         tab.identityPath = settings.identityPath
+        tab.useAgent = settings.usesAgent == true
+        tab.agentSocket = settings.agentSocket
+        tab.confirmsEachConnection = settings.asksEachConnection
         tab.showsFiles = settings.opensFiles == true
+        tab.forwardingRules = settings.forwardingRules ?? []
         if inNewWindow {
             let controller = SavedSessionWindow(model: self, tab: tab)
             sessionWindows[tab.id] = controller
@@ -743,9 +836,14 @@ struct HostKeyChange: Identifiable {
     }
     public func saveConnection(_ tab: SessionTab, name: String, parent: UUID?) throws {
         guard let port = Int(tab.port) else { throw WorkspaceError.invalid("Enter a valid port.") }
-        let settings = SavedConnection(host: tab.host.trimmingCharacters(in: .whitespacesAndNewlines), port: port, username: tab.username,
-            proxyHost: tab.useProxy ? tab.proxyHost : nil, proxyPort: tab.useProxy ? Int(tab.proxyPort) : nil, identityPath: tab.identityPath, opensFiles: tab.showsFiles, jumpSessionID: tab.jumpSessionID)
-        try settings.validate(); try sessionTree.add(name: name, parent: parent, connection: settings)
+        var settings = SavedConnection(host: tab.host.trimmingCharacters(in: .whitespacesAndNewlines), port: port, username: tab.username,
+            proxyHost: tab.useProxy ? tab.proxyHost : nil, proxyPort: tab.useProxy ? Int(tab.proxyPort) : nil, identityPath: tab.identityPath, opensFiles: tab.showsFiles, jumpSessionID: tab.jumpSessionID,
+            usesAgent: tab.useAgent, agentSocket: tab.agentSocket, proxyKind: tab.proxyKind,
+            confirmsEachConnection: tab.confirmsEachConnection)
+        settings.forwardingRules = tab.forwardingRules.isEmpty ? nil : tab.forwardingRules
+        try settings.validate()
+        let id = try sessionTree.add(name: name, parent: parent, connection: settings)
+        if tab.savedSessionID == nil { tab.savedSessionID = id }
     }
     public func importProfile(_ url: URL) throws {
         let profile = try SessionProfile(data: limitedData(url), name: url.deletingPathExtension().lastPathComponent)
@@ -767,22 +865,141 @@ struct HostKeyChange: Identifiable {
         let data = try handle.read(upToCount: 1_048_577) ?? Data()
         guard data.count <= 1_048_576 else { throw WorkspaceError.invalid("Settings file exceeds 1 MiB.") }; return data
     }
-    public func refreshVault() async { vaultState = await vault.state }
+    public func refreshVault() async {
+        vaultState = await vault.state
+        vaultHasTouchID = await vault.touchIDEnrolled
+        savesWithoutUnlock = await vault.savesWithoutUnlock
+        vaultEntries = await vault.vaultIdentifiers
+    }
     public func configureVault(password: String, create: Bool) async {
         guard !vaultBusy else { return }; vaultBusy = true; error = nil
-        do { if create { try await vault.create(password: password) } else { try await vault.unlock(password: password) } }
+        do {
+            if create { try await vault.create(password: password) } else { try await vault.unlock(password: password) }
+            await vault.persistSessionSecrets()
+            try await vault.enableTouchIDAfterPasswordUnlock()
+        }
         catch { self.error = message(for: error) }
         await refreshVault(); vaultBusy = false
     }
+    func unlockVaultWithTouchID() async {
+        guard !vaultBusy else { return }
+        vaultBusy = true
+        error = nil
+        do {
+            try await vault.unlockWithTouchID(reason: T("Unlock the MShell password vault"))
+            await vault.persistSessionSecrets()
+        }
+        catch { self.error = message(for: error) }
+        await refreshVault()
+        vaultBusy = false
+    }
     public func lockVault() async { await vault.lock(); await refreshVault() }
+    /// Stops using the tab's key: the saved session forgets it, and so does the saved passphrase unless another
+    /// saved session still uses the same key. The key file stays.
+    func removeKey(from tab: SessionTab) async {
+        guard let path = tab.identityPath else { return }
+        tab.identityPath = nil
+        do {
+            if let id = tab.savedSessionID, let node = sessionTree.node(id), var connection = node.connection,
+               connection.identityPath == path {
+                connection.identityPath = nil
+                try sessionTree.updateConnection(id, name: node.name, connection: connection)
+            }
+            try await forgetSignIn(account: tab.credentialID, keyPath: path)
+        } catch {
+            tab.error = message(for: error)
+        }
+    }
+
+    /// Withdraws what let an account connect without typing, after its key is removed: the account's remembered
+    /// password is deleted, so the next connection, also from the session tree, needs the password typed again (or
+    /// the vault unlocked, if a copy was put there). The key's passphrase goes too unless another saved session
+    /// still uses that key.
+    func forgetSignIn(account: String, keyPath: String) async throws {
+        try await vault.forgetRemembered(id: account)
+        if !sessionTree.nodes.contains(where: { $0.connection?.identityPath == keyPath }) {
+            try await vault.forgetRemembered(id: Self.passphraseID(keyPath))
+        }
+        await refreshVault()
+    }
+
+    // MARK: Saved sign-ins list
+
+    /// Asks for Touch ID or the Mac password before the saved sign-ins are listed. Returns false when cancelled.
+    /// Changing whether a saved session asks on every connection needs the master password when a vault exists
+    /// (`verifyMasterPassword`), and Touch ID or the Mac password otherwise.
+    func verifyMasterPassword(_ password: String) async -> Bool { await vault.verifyMasterPassword(password) }
+    func authorizeAskChange() async -> Bool {
+        do { try await confirmOwner(T("change whether this session asks on every connection")); return true }
+        catch { return false }
+    }
+
+    func authorizeSavedSignIns() async -> Bool {
+        do { try await confirmOwner(T("view saved passwords")); return true }
+        catch let error as LAError where [.userCancel, .appCancel, .systemCancel].contains(error.code) { return false }
+        catch { self.error = "Touch ID or the Mac password is required to view saved passwords."; return false }
+    }
+
+    func savedSignIns() async -> [SavedSignIn] {
+        let connections = sessionTree.nodes.compactMap { node in node.connection.map { (node.name, $0) } }
+        return await vault.savedEntries().map { entry, place in
+            if entry.hasPrefix("passphrase:") {
+                let path = String(entry.dropFirst("passphrase:".count))
+                let names = connections.filter { $0.1.identityPath == path }.map(\.0)
+                return SavedSignIn(entry: entry, place: place, isPassphrase: true,
+                                   account: URL(fileURLWithPath: path).lastPathComponent, detail: path, sessions: names)
+            }
+            let names = connections.filter { "\($0.1.username)@\(KnownHosts.endpoint(host: $0.1.host, port: $0.1.port))" == entry }.map(\.0)
+            return SavedSignIn(entry: entry, place: place, isPassphrase: false, account: entry, detail: nil, sessions: names)
+        }
+    }
+
+    func revealSignIn(_ item: SavedSignIn) async throws -> String { try await vault.revealSaved(id: item.entry, in: item.place) }
+
+    func removeSignIn(_ item: SavedSignIn) async throws {
+        try await vault.removeSaved(id: item.entry, from: item.place)
+        await refreshVault()
+    }
+
+    /// Deletes the account's password from the vault and from this launch's memory, so the next connection asks.
+    func removeFromVault(_ tab: SessionTab) async {
+        let id = tab.credentialID
+        do {
+            try await vault.removeSaved(id: id, from: .vault)
+            await vault.forgetForSession(id: id)
+        } catch VaultError.locked {
+            tab.error = "Unlock the password vault to delete its entries."
+        } catch {
+            tab.error = message(for: error)
+        }
+        await refreshVault()
+    }
+
+    /// Puts the account's password in the master-password vault: the one typed in the form, or the one remembered.
+    /// It is a copy the user keeps on purpose; signing in remembers passwords on this Mac without it.
     public func savePassword(_ tab: SessionTab) async {
-        guard tab.identityPath == nil else { return }
+        guard tab.identityPath == nil, !tab.useAgent else { return }
         do {
             let secret = tab.password.isEmpty ? try await vault.password(id: tab.credentialID) : tab.password
-            try await vault.save(id: tab.credentialID, password: secret)
+            try await vault.addToVault(id: tab.credentialID, secret: secret)
+            await refreshVault()
         }
         catch { tab.error = message(for: error) }
     }
+}
+
+/// One entry in the saved sign-ins list: an account password or a key passphrase.
+struct SavedSignIn: Identifiable, Equatable {
+    /// The vault entry ID: `user@[host]:port` or `passphrase:<key path>`.
+    let entry: String
+    /// Remembered on this Mac, or kept in the master-password vault.
+    let place: CredentialVault.Place
+    var id: String { (place == .vault ? "vault:" : "mac:") + entry }
+    let isPassphrase: Bool
+    let account: String
+    let detail: String?
+    /// Saved sessions that use it.
+    let sessions: [String]
 }
 
 func message(for error: Error) -> String {

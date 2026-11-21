@@ -6,6 +6,40 @@ import XCTest
 @testable import App
 
 @MainActor final class TunnelWorkspaceTests: XCTestCase {
+    func testSavedForwardingRulesRoundTripAndRestartWithConnection() async throws {
+        try await OpenSSHFixture.withServer(interactive: true) { port, _ in
+            let root = self.scratch()
+            let original = try WorkspaceModel(storage: root)
+            let rule = ForwardingRule(kind: .dynamic, listenPort: 0)
+            let local = ForwardingRule(kind: .local, listenPort: 0, host: "127.0.0.1", port: port)
+            let id = try original.sessionTree.add(name: "Forwarding", parent: nil,
+                connection: SavedConnection(host: "127.0.0.1", port: port, username: "carve"))
+            let draft = try XCTUnwrap(original.selected)
+            draft.savedSessionID = id
+            try original.changeForwardingRules(draft) { $0 = [rule, local] }
+
+            let model = try WorkspaceModel(storage: root)
+            let item = try XCTUnwrap(model.sessionTree.node(id))
+            XCTAssertEqual(item.connection?.forwardingRules, [rule, local])
+            await model.vault.rememberForSession(id: "carve@[127.0.0.1]:\(port)", password: "secret",
+                                                 generation: await model.vault.sessionGeneration)
+            let tab = try XCTUnwrap(model.openSaved(item))
+            await self.approve(model, tab, endpoint: "[127.0.0.1]:\(port)")
+            await tab.savedConnectionTask?.value
+            XCTAssertTrue(tab.connected)
+            XCTAssertEqual(tab.forwards.map(\.rule), [rule, local])
+            XCTAssertTrue(tab.forwards.allSatisfy { $0.handle.port > 0 })
+            XCTAssertTrue(tab.forwardingErrors.isEmpty)
+
+            try model.changeForwardingRules(tab) { $0.removeAll { $0.id == rule.id } }
+            await model.disconnect(tab)
+            XCTAssertTrue(tab.forwards.isEmpty)
+            await model.connect(tab)
+            XCTAssertEqual(tab.forwards.map(\.rule), [local])
+            await model.closeAll()
+        }
+    }
+
     func testSavedJumpRoutesTerminalSFTPAndLoopbackForwardWithIndependentTrust() async throws {
         let group = MultiThreadedEventLoopGroup.singleton
         let echo = try await ServerBootstrap(group: group)
@@ -63,6 +97,63 @@ import XCTest
                 XCTAssertTrue(tab.connected)
                 await reloaded.closeAll()
             }
+        }
+    }
+
+    func testThreeHopChainConnectsThroughEachSavedJumpHost() async throws {
+        let targetAuth = ScopedPassword(user: "target", secret: "target-fixture")
+        try await OpenSSHFixture.withServer(interactive: true, auth: targetAuth) { targetPort, _ in
+            let middleAuth = ScopedPassword(user: "middle", secret: "middle-fixture")
+            try await OpenSSHFixture.withServer(auth: middleAuth, route: .init(host: "target.mshell.invalid", port: targetPort)) { middlePort, _ in
+                let firstAuth = ScopedPassword(user: "first", secret: "first-fixture")
+                try await OpenSSHFixture.withServer(auth: firstAuth, route: .init(host: "middle.mshell.invalid", port: middlePort)) { firstPort, _ in
+                    let model = try WorkspaceModel(storage: self.scratch())
+                    let first = try model.sessionTree.add(name: "First", parent: nil, connection: .init(
+                        host: "127.0.0.1", port: firstPort, username: "first"))
+                    let middle = try model.sessionTree.add(name: "Middle", parent: nil, connection: .init(
+                        host: "middle.mshell.invalid", port: middlePort, username: "middle", jumpSessionID: first))
+                    let target = try model.sessionTree.add(name: "Target", parent: nil, connection: .init(
+                        host: "target.mshell.invalid", port: targetPort, username: "target", jumpSessionID: middle))
+                    // The first hop's password comes from this session's memory; the typed jump secret is the last hop's.
+                    await model.vault.rememberForSession(id: "first@[127.0.0.1]:\(firstPort)", password: "first-fixture",
+                                                         generation: await model.vault.sessionGeneration)
+                    let tab = try XCTUnwrap(model.openSaved(XCTUnwrap(model.sessionTree.node(target))))
+                    tab.password = "target-fixture"
+                    tab.jumpSecret = "middle-fixture"
+                    await self.approve(model, tab, endpoint: "[127.0.0.1]:\(firstPort)")
+                    await self.approve(model, tab, endpoint: "[middle.mshell.invalid]:\(middlePort)")
+                    await self.approve(model, tab, endpoint: "[target.mshell.invalid]:\(targetPort)")
+                    await tab.savedConnectionTask?.value
+                    XCTAssertTrue(tab.connected, tab.error ?? "")
+                    XCTAssertTrue(tab.terminalReady, tab.error ?? "")
+                    await model.closeAll()
+                }
+            }
+        }
+    }
+
+    func testFirstLoginSavesThePasswordSoLaterConnectionsNeedNoTyping() async throws {
+        try await OpenSSHFixture.withServer(interactive: true) { port, _ in
+            let root = self.scratch()
+            let model = try WorkspaceModel(storage: root)
+            await model.configureVault(password: "fixture-master", create: true)
+            let tab = try XCTUnwrap(model.selected)
+            tab.host = "127.0.0.1"; tab.port = String(port); tab.username = "carve"; tab.password = "secret"
+            let login = Task { await model.connect(tab) }
+            await self.approve(model, tab, endpoint: "[127.0.0.1]:\(port)")
+            await login.value
+            XCTAssertTrue(tab.connected, tab.error ?? "")
+            await model.closeAll()
+
+            // A new launch: unlock the vault once, then connect with an empty password field.
+            let reopened = try WorkspaceModel(storage: root)
+            await reopened.configureVault(password: "fixture-master", create: false)
+            let again = try XCTUnwrap(reopened.selected)
+            again.host = "127.0.0.1"; again.port = String(port); again.username = "carve"
+            await reopened.connect(again)
+            XCTAssertTrue(again.connected, again.error ?? "")
+            XCTAssertNil(again.hostKeyPrompt)
+            await reopened.closeAll()
         }
     }
 

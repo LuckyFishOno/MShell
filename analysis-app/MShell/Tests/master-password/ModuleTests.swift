@@ -25,6 +25,16 @@ final class MasterPasswordFeatureTests: XCTestCase {
         XCTAssertEqual(reopened.identifiers, ["db", "prod-ssh"])
     }
 
+    func testProtectedUnlockKeyIsVerifiedAgainstTheVault() throws {
+        let vault = try MasterVault.create(password: "fixture-password", iterations: 100)
+            .storing(id: "example", secret: "fixture-secret")
+        let key = try vault.vaultKeyForProtectedStorage()
+        let locked = try MasterVault.load(vault.serialized())
+        XCTAssertThrowsError(try locked.vaultKeyForProtectedStorage())
+        XCTAssertThrowsError(try locked.unlocked(vaultKey: Data(repeating: 0, count: 32)))
+        XCTAssertEqual(try locked.unlocked(vaultKey: key).retrieve(id: "example"), "fixture-secret")
+    }
+
     func testWrongPasswordIsRejectedAndSecretsStayUnreadable() throws {
         let v = try (try MasterVault.create(password: "right-one", iterations: iters)).storing(id: "a", secret: "s")
         let data = try v.serialized()

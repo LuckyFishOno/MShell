@@ -3,8 +3,16 @@ import NIOCore
 import NIOPosix
 import NIOSSH
 
+/// A running port forward. Local and dynamic forwards listen on this Mac; remote forwards listen on the server.
+public protocol SSHForward: AnyObject, Sendable {
+    /// The listening port: on 127.0.0.1 for local and dynamic forwards, on the server for remote ones.
+    var port: Int { get }
+    func close() async
+    func waitForClose() async
+}
+
 /// A loopback listener accounted for by a specific SSH transport.
-public final class SSHLocalForward: Sendable {
+public final class SSHLocalForward: SSHForward {
     public let port: Int
     private let state: LocalForwardState
     private let channel: Channel
@@ -32,8 +40,18 @@ extension SSHSession {
         guard (0...65535).contains(localPort), validTCPDestination(targetHost, targetPort) else {
             throw SSHError.invalidSettings("Enter a forwarding host and valid TCP ports.")
         }
+        return try await startListener(localPort: localPort, state: LocalForwardState(parent: channel, host: targetHost, port: targetPort))
+    }
+
+    /// Starts a SOCKS4/4a/5 proxy on 127.0.0.1. Each CONNECT request is opened by the SSH server, as `ssh -D` does.
+    public func startDynamicForward(localPort: Int) async throws -> SSHLocalForward {
+        guard !closed, channel.isActive else { throw SSHError.notConnected }
+        guard (0...65535).contains(localPort) else { throw SSHError.invalidSettings("Enter a valid local port.") }
+        return try await startListener(localPort: localPort, state: LocalForwardState(parent: channel, host: nil, port: 0))
+    }
+
+    private func startListener(localPort: Int, state: LocalForwardState) async throws -> SSHLocalForward {
         let parent = channel
-        let state = LocalForwardState(parent: parent, host: targetHost, port: targetPort)
         let listener = try await ServerBootstrap(group: parent.eventLoop)
             .serverChannelOption(ChannelOptions.backlog, value: 32)
             .childChannelOption(ChannelOptions.allowRemoteHalfClosure, value: true)
@@ -63,13 +81,13 @@ extension SSHSession {
     }
 }
 
-private func validTCPDestination(_ host: String, _ port: Int) -> Bool {
+func validTCPDestination(_ host: String, _ port: Int) -> Bool {
     !host.isEmpty && host.utf8.count <= 1024 && (1...65535).contains(port) &&
         !host.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }
 }
 
 /// NIOSSH owns the raw promise. A separate deadline handles slow or nonresponsive peers.
-private func openDirectTCPIP(on parent: Channel, host: String, port: Int, origin: SocketAddress,
+func openDirectTCPIP(on parent: Channel, host: String, port: Int, origin: SocketAddress,
                              timeoutSeconds: Int64 = 15,
                              initializer: @escaping @Sendable (Channel) -> EventLoopFuture<Void>) -> EventLoopFuture<Channel> {
     let loop = parent.eventLoop
@@ -104,14 +122,15 @@ private func openDirectTCPIP(on parent: Channel, host: String, port: Int, origin
 /// Mutable state is confined to the SSH event loop, which also owns the loopback listener and peers.
 private final class LocalForwardState: @unchecked Sendable {
     let parent: Channel
-    let host: String
+    /// The fixed destination, or nil for a dynamic (SOCKS) forward where each client names its own.
+    let host: String?
     let port: Int
     var listener: Channel?
     private var peers: [ObjectIdentifier: Channel] = [:]
     private var stopped = false
     private var pending = 0
 
-    init(parent: Channel, host: String, port: Int) {
+    init(parent: Channel, host: String?, port: Int) {
         self.parent = parent
         self.host = host
         self.port = port
@@ -125,15 +144,29 @@ private final class LocalForwardState: @unchecked Sendable {
         }
         let id = ObjectIdentifier(local)
         peers[id] = local
-        pending += 1
         local.closeFuture.whenComplete { [weak self] _ in self?.peers.removeValue(forKey: id) }
+        guard let host else {
+            return local.pipeline.addHandler(SOCKSServerHandshake { [weak self] host, port, reply in
+                guard let self, validTCPDestination(host, port) else { return loop.makeFailedFuture(SSHError.notConnected) }
+                return self.tunnel(local, id: id, origin: origin, host: host, port: port, reply: reply)
+            })
+        }
+        return tunnel(local, id: id, origin: origin, host: host, port: port, reply: nil)
+    }
+
+    /// Opens the SSH channel for one client. For SOCKS, the success reply is written before any server bytes.
+    private func tunnel(_ local: Channel, id: ObjectIdentifier, origin: SocketAddress, host: String, port: Int,
+                        reply: [UInt8]?) -> EventLoopFuture<Void> {
+        let loop = parent.eventLoop
+        pending += 1
         let (client, tunnel) = RelaySide.pair()
         let opened = openDirectTCPIP(on: parent, host: host, port: port, origin: origin) { [weak self] remote in
             guard let self, !self.stopped, self.peers[id] != nil else { return loop.makeFailedFuture(SSHError.notConnected) }
             return remote.setOption(ChannelOptions.allowRemoteHalfClosure, value: true).flatMap {
                 remote.pipeline.addHandlers([SSHByteStream(), tunnel])
             }.flatMap {
-                local.pipeline.addHandler(client)
+                if let reply { local.writeAndFlush(local.allocator.buffer(bytes: reply), promise: nil) }
+                return local.pipeline.addHandler(client)
             }
         }
         opened.whenComplete { _ in self.pending -= 1 }

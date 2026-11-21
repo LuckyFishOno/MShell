@@ -133,6 +133,13 @@ private final class OpenSSHSubsystem: ChannelInboundHandler {
                 if byte == 3 { inputLine = []; send("^C\r\nREADY> ", context: context) }
                 else if byte == 13 {
                     let line = String(decoding: inputLine, as: UTF8.self); inputLine = []
+                    if line == "exit" {
+                        send("\r\nlogout\r\n", context: context)
+                        context.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: 0))
+                            .whenComplete { _ in context.close(promise: nil) }
+                        return
+                    }
+                    if line == "drop" { context.close(promise: nil); return }
                     if line == "cd child" { cwd = "/initial/child" }
                     send("\r\n" + (line == "pwd" ? cwd : line.hasPrefix("echo ") ? String(line.dropFirst(5)) : "") + "\r\nREADY> ", context: context)
                 } else if byte == 127 { if !inputLine.isEmpty { inputLine.removeLast() } }

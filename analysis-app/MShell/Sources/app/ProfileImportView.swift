@@ -5,14 +5,17 @@ struct ProfileImportView: View {
     let store: SessionTreeStore
     let source: URL
     let parent: UUID?
+    var kind: FolderImportRequest.Source = .xshellFolder
     @State private var draft: ProfileImport?
     @State private var name = ""
     @State private var error: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label(T("Import Xshell folder"), systemImage: "folder.badge.plus").font(.title2.weight(.semibold))
-            Text(source.lastPathComponent).foregroundStyle(.secondary)
+            Label(kind == .openSSHConfig ? T("Import OpenSSH config") : T("Import Xshell folder"),
+                  systemImage: kind == .openSSHConfig ? "doc.text" : "folder.badge.plus").font(.title2.weight(.semibold))
+            Text(kind == .openSSHConfig ? source.path : source.lastPathComponent).foregroundStyle(.secondary)
+                .lineLimit(1).truncationMode(.middle)
             if let draft {
                 LabeledContent(T("Folder name")) { TextField(T("Folder name"), text: $name).labelsHidden() }
                 Text(T("Review the sessions below. Credentials and host trust must be set in MShell."))
@@ -22,8 +25,13 @@ struct ProfileImportView: View {
                         ForEach(draft.entries, id: \.components) { entry in
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(entry.path)
-                                Text(verbatim: "\(entry.connection.username)@\(entry.connection.host):\(entry.connection.port)")
+                                Text(verbatim: "\(entry.connection.username)@\(entry.connection.host):\(entry.connection.port)"
+                                     + (entry.jump.map { " ⟵ " + $0.joined(separator: " / ") } ?? ""))
                                     .font(.caption.monospaced()).foregroundStyle(.secondary)
+                                if let key = entry.connection.identityPath {
+                                    Text(verbatim: key).font(.caption2.monospaced()).foregroundStyle(.tertiary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                }
                                 ForEach(entry.notes, id: \.self) { Text(T($0)).font(.caption).foregroundStyle(.orange) }
                             }.padding(.vertical, 3)
                         }
@@ -56,7 +64,10 @@ struct ProfileImportView: View {
         .padding(24)
         .frame(width: 600, height: 475)
         .task(id: source) {
-            let scan = Task.detached(priority: .userInitiated) { try ProfileImport.scan(source) }
+            let kind = kind
+            let scan = Task.detached(priority: .userInitiated) {
+                kind == .openSSHConfig ? try OpenSSHConfigImport.scan(source) : try ProfileImport.scan(source)
+            }
             do {
                 let preview = try await withTaskCancellationHandler { try await scan.value } onCancel: { scan.cancel() }
                 try Task.checkCancellation()

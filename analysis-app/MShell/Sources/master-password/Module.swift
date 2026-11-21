@@ -118,8 +118,19 @@ public final class MasterVault {
 
     /// Returns an unlocked copy, or throws wrongPassword. Constant work regardless of outcome (PBKDF2 then one GCM open).
     public func unlocked(password: String) throws -> MasterVault {
-        guard let salt = Data(base64Encoded: file.saltBase64), let verifier = Data(base64Encoded: file.verifierBase64) else { throw VaultError.corruptVault("bad base64") }
-        let key = SymmetricKey(data: PBKDF2.deriveKey(password: Array(password.utf8), salt: Array(salt), iterations: file.iterations))
+        guard let salt = Data(base64Encoded: file.saltBase64) else { throw VaultError.corruptVault("bad base64") }
+        return try unlocked(vaultKey: Data(PBKDF2.deriveKey(password: Array(password.utf8), salt: Array(salt), iterations: file.iterations)))
+    }
+
+    /// Only pass this key to protected platform storage. The master password is never exported.
+    public func vaultKeyForProtectedStorage() throws -> Data {
+        try requireKey().withUnsafeBytes { Data($0) }
+    }
+
+    public func unlocked(vaultKey: Data) throws -> MasterVault {
+        guard vaultKey.count == 32 else { throw VaultError.wrongPassword }
+        guard let verifier = Data(base64Encoded: file.verifierBase64) else { throw VaultError.corruptVault("bad base64") }
+        let key = SymmetricKey(data: vaultKey)
         do {
             let box = try AES.GCM.SealedBox(combined: verifier)
             let opened = try AES.GCM.open(box, using: key)

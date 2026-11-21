@@ -22,11 +22,22 @@ import NIOSOCKS
 // maintained NIOSOCKS (swift-nio-extras), not a hand-written handshake. This is the connect-and-proxy
 // piece only; it does not implement SSH. Independent reconstruction, not a port of nssock2.dll.
 //
-// Supported now: direct, and SOCKS5 without authentication (the common case for local/jump proxies).
-// Not yet: authenticated SOCKS5, SOCKS4/4a, and HTTP CONNECT. These are recorded as gaps rather than
-// hand-rolled, so the proxy framing stays in a reviewed library.
+// Supported now: direct; SOCKS5 without authentication (NIOSOCKS); SOCKS4 and SOCKS4a; and HTTP CONNECT
+// without authentication. The SOCKS4 and HTTP exchanges are small fixed formats handled in ProxyHandshake.swift.
+// Not yet: proxy sign-in (SOCKS5 user/password, SOCKS4 user ID, HTTP Proxy-Authorization).
 
-public enum ProxyKind: String, Sendable, CaseIterable { case none, socks5 }
+public enum ProxyKind: String, Sendable, CaseIterable, Codable {
+    case none, socks5, socks4, http
+
+    public var title: String {
+        switch self {
+        case .none: return "None"
+        case .socks5: return "SOCKS5"
+        case .socks4: return "SOCKS4"
+        case .http: return "HTTP"
+        }
+    }
+}
 
 public struct ProxyConfiguration: Equatable, Sendable {
     public var kind: ProxyKind
@@ -87,6 +98,26 @@ public enum NetworkConnector {
             do {
                 return try await ClientBootstrap(group: group).connectTimeout(connectTimeout).connect(host: host, port: port).get()
             } catch { throw NetworkError.connectFailed(String(describing: error)) }
+        case .socks4, .http:
+            guard !proxy.host.isEmpty, proxy.port > 0, proxy.port <= 65535 else { throw NetworkError.invalidTarget("proxy \(proxy.host):\(proxy.port)") }
+            let established = group.any().makePromise(of: Void.self)
+            let channel: Channel
+            do {
+                channel = try await ClientBootstrap(group: group).connectTimeout(connectTimeout)
+                    .channelInitializer { channel in
+                        channel.pipeline.addHandlers(ProxyHandshake.handlers(for: proxy, host: host, port: port, established: established))
+                    }.connect(host: proxy.host, port: proxy.port).get()
+            } catch {
+                established.fail(error); _ = try? await established.futureResult.get()
+                throw NetworkError.proxyFailed("connect to proxy: \(error)")
+            }
+            let timeout = channel.eventLoop.scheduleTask(in: connectTimeout) {
+                established.fail(NetworkError.proxyFailed("The proxy did not answer in time."))
+            }
+            defer { timeout.cancel() }
+            do { try await established.futureResult.get() }
+            catch { try? await channel.close().get(); throw error }
+            return channel
         case .socks5:
             guard !proxy.host.isEmpty, proxy.port > 0, proxy.port <= 65535 else { throw NetworkError.invalidTarget("proxy \(proxy.host):\(proxy.port)") }
             let established = group.any().makePromise(of: Void.self)
@@ -122,7 +153,7 @@ public enum NetworkFeature: CarveFeature {
 
     public static func run(_ request: FeatureRequest, dependencies: FeatureOutputs) throws -> FeatureResponse {
         if request.payload.isEmpty {
-            return FeatureResponse(payload: #"{"ready":true,"proxies":["none","socks5"],"unsupported":["socks5-auth","socks4","http-connect"]}"#)
+            return FeatureResponse(payload: #"{"ready":true,"proxies":["none","socks5","socks4","http"],"unsupported":["proxy-auth"]}"#)
         }
         guard let obj = try JSONSerialization.jsonObject(with: Data(request.payload.utf8)) as? [String: Any], (obj["op"] as? String) == "describe",
               let host = obj["host"] as? String, let port = obj["port"] as? Int else {

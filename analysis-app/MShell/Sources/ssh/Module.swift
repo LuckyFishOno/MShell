@@ -17,6 +17,8 @@ import Network
 public enum SSHCredential: Sendable {
     case password(String)
     case privateKey(NIOSSHPrivateKey)
+    /// Offers each key in turn, as OpenSSH does with agent keys followed by an identity file.
+    case privateKeys([NIOSSHPrivateKey])
 }
 
 public enum HostKeyPolicy: Sendable {
@@ -56,18 +58,26 @@ public enum SSHError: Error, Equatable {
 
 // MARK: - Auth and host-key delegates
 
+/// Offers the credential's password or keys one at a time. NIOSSH asks again after each rejection.
 final class PasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate {
-    private var offer: NIOSSHUserAuthenticationOffer?
+    private var offers: [NIOSSHUserAuthenticationOffer]
     init(username: String, credential: SSHCredential) {
+        func key(_ k: NIOSSHPrivateKey) -> NIOSSHUserAuthenticationOffer {
+            NIOSSHUserAuthenticationOffer(username: username, serviceName: "", offer: .privateKey(.init(privateKey: k)))
+        }
         switch credential {
-        case .password(let p): offer = NIOSSHUserAuthenticationOffer(username: username, serviceName: "", offer: .password(.init(password: p)))
-        case .privateKey(let k): offer = NIOSSHUserAuthenticationOffer(username: username, serviceName: "", offer: .privateKey(.init(privateKey: k)))
+        case .password(let p): offers = [NIOSSHUserAuthenticationOffer(username: username, serviceName: "", offer: .password(.init(password: p)))]
+        case .privateKey(let k): offers = [key(k)]
+        case .privateKeys(let keys): offers = keys.map(key)
         }
     }
     func nextAuthenticationType(availableMethods: NIOSSHAvailableUserAuthenticationMethods, nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>) {
-        guard let offer else { nextChallengePromise.fail(SSHError.authenticationFailed); return }
-        let wanted: NIOSSHAvailableUserAuthenticationMethods = { if case .password = offer.offer { return .password } else { return .publicKey } }()
-        if availableMethods.contains(wanted) { self.offer = nil; nextChallengePromise.succeed(offer) } else { nextChallengePromise.succeed(nil) }
+        while !offers.isEmpty {
+            let offer = offers.removeFirst()
+            let wanted: NIOSSHAvailableUserAuthenticationMethods = { if case .password = offer.offer { return .password } else { return .publicKey } }()
+            if availableMethods.contains(wanted) { nextChallengePromise.succeed(offer); return }
+        }
+        nextChallengePromise.fail(SSHError.authenticationFailed)
     }
 }
 
@@ -130,7 +140,7 @@ final class AuthWatcher: ChannelInboundHandler, @unchecked Sendable {
         context.fireChannelInactive()
     }
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        failIfPending((error as? SSHError) ?? SSHError.connectFailed(String(describing: error)))
+        failIfPending((error as? SSHError) ?? SSHError.connectFailed((error as? LocalizedError)?.errorDescription ?? String(describing: error)))
         context.close(promise: nil)
     }
 }
@@ -216,10 +226,13 @@ public actor SSHSession {
     let channel: Channel
     private(set) var closed = false
     private let jump: SSHSession?
+    /// Hands channels the server opens (forwarded ports) to the forward that asked for them.
+    let inbound: InboundChannelRouter
 
-    init(channel: Channel, jump: SSHSession? = nil) {
+    init(channel: Channel, jump: SSHSession? = nil, inbound: InboundChannelRouter = InboundChannelRouter()) {
         self.channel = channel
         self.jump = jump
+        self.inbound = inbound
     }
 
     public static func connect(settings: SSHConnectionSettings, credential: SSHCredential,
@@ -227,19 +240,20 @@ public actor SSHSession {
         try await connect(settings: settings, credential: credential, proxy: .direct, hostKey: hostKey, connectTimeoutSeconds: connectTimeoutSeconds)
     }
 
-    /// Connects directly or through a SOCKS5 proxy. The SOCKS handler (when present) is installed before
+    /// Connects directly or through a SOCKS5, SOCKS4, or HTTP CONNECT proxy. The proxy handler (when present) is installed before
     /// the NIOSSH handler, so the tunnel is ready before the SSH handshake.
     public static func connect(settings: SSHConnectionSettings, credential: SSHCredential, proxy: ProxyConfiguration,
                                hostKey: HostKeyPolicy = .acceptAny, connectTimeoutSeconds: Int64 = 30) async throws -> SSHSession {
         guard !settings.host.isEmpty, settings.port > 0, settings.port <= 65535, connectTimeoutSeconds > 0, connectTimeoutSeconds <= 3600 else { throw SSHError.invalidSettings("\(settings.host):\(settings.port)") }
         let config = clientConfiguration(settings: settings, credential: credential, hostKey: hostKey)
 
-        let useSOCKS = proxy.kind == .socks5
-        let connectHost = useSOCKS ? proxy.host : settings.host
-        let connectPort = useSOCKS ? proxy.port : settings.port
-        if useSOCKS { guard !proxy.host.isEmpty, proxy.port > 0, proxy.port <= 65535 else { throw SSHError.invalidSettings("proxy \(proxy.host):\(proxy.port)") } }
+        let useProxy = proxy.kind != .none
+        let connectHost = useProxy ? proxy.host : settings.host
+        let connectPort = useProxy ? proxy.port : settings.port
+        if useProxy { guard !proxy.host.isEmpty, proxy.port > 0, proxy.port <= 65535 else { throw SSHError.invalidSettings("proxy \(proxy.host):\(proxy.port)") } }
 
         let loop = MultiThreadedEventLoopGroup.singleton.next()
+        let router = InboundChannelRouter()
         let authPromise = loop.makePromise(of: Void.self)
         let watcher = AuthWatcher(authPromise, timeoutSeconds: connectTimeoutSeconds)
 
@@ -247,9 +261,9 @@ public actor SSHSession {
             .connectTimeout(.seconds(connectTimeoutSeconds))
             .channelOption(ChannelOptions.socket(IPPROTO_TCP, TCP_NODELAY), value: 1)
             .channelInitializer { channel in
-                var handlers: [ChannelHandler] = []
-                if useSOCKS { handlers.append(SOCKSClientHandler(targetAddress: .domain(settings.host, port: settings.port))) }
-                handlers.append(NIOSSHHandler(role: .client(config), allocator: channel.allocator, inboundChildChannelInitializer: nil))
+                var handlers = ProxyHandshake.handlers(for: proxy, host: settings.host, port: settings.port)
+                handlers.append(NIOSSHHandler(role: .client(config), allocator: channel.allocator,
+                                              inboundChildChannelInitializer: router.initializer))
                 handlers.append(watcher)
                 return channel.pipeline.addHandlers(handlers)
             }
@@ -262,7 +276,7 @@ public actor SSHSession {
             throw failure
         }
         try await finishAuthenticating(channel, auth: authPromise.futureResult)
-        return SSHSession(channel: channel)
+        return SSHSession(channel: channel, inbound: router)
     }
 
     /// Opens a second SSH handshake over an authenticated jump host. The returned
@@ -272,20 +286,21 @@ public actor SSHSession {
         guard connectTimeoutSeconds > 0, connectTimeoutSeconds <= 3600 else { throw SSHError.invalidSettings("Invalid SSH timeout.") }
         let config = clientConfiguration(settings: settings, credential: credential, hostKey: hostKey)
         let loop = jump.channel.eventLoop
+        let router = InboundChannelRouter()
         let auth = loop.makePromise(of: Void.self)
         let watcher = AuthWatcher(auth, timeoutSeconds: connectTimeoutSeconds)
         let channel: Channel
         do {
             channel = try await jump.openTCPChannel(host: settings.host, port: settings.port, timeoutSeconds: connectTimeoutSeconds) { child in
                 child.pipeline.addHandlers([SSHByteStream(), NIOSSHHandler(role: .client(config), allocator: child.allocator,
-                                                                           inboundChildChannelInitializer: nil), watcher])
+                                                                           inboundChildChannelInitializer: router.initializer), watcher])
             }
         } catch {
             loop.execute { watcher.failIfPending(error) }
             throw error
         }
         try await finishAuthenticating(channel, auth: auth.futureResult)
-        return SSHSession(channel: channel, jump: jump)
+        return SSHSession(channel: channel, jump: jump, inbound: router)
     }
 
     private static func finishAuthenticating(_ channel: Channel, auth: EventLoopFuture<Void>) async throws {

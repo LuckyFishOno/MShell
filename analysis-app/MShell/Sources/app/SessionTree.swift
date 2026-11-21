@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Network
 
 /// Native, credential-free catalog. This format is not an original profile-folder format.
 public struct SavedConnection: Codable, Equatable, Sendable {
@@ -8,24 +9,50 @@ public struct SavedConnection: Codable, Equatable, Sendable {
     public var username: String
     public var proxyHost: String?
     public var proxyPort: Int?
+    /// SOCKS4, SOCKS5, or HTTP CONNECT. Saved catalogs from before this field mean SOCKS5.
+    public var proxyKind: ProxyKind?
     public var identityPath: String?
     var opensFiles: Bool?
     public var jumpSessionID: UUID?
-    public init(host: String, port: Int = 22, username: String, proxyHost: String? = nil, proxyPort: Int? = nil, identityPath: String? = nil, opensFiles: Bool = false, jumpSessionID: UUID? = nil) {
+    /// Offers the SSH agent's keys before the identity file.
+    public var usesAgent: Bool?
+    /// An agent socket other than `SSH_AUTH_SOCK`, such as one named by `IdentityAgent` in an OpenSSH config.
+    public var agentSocket: String?
+    var forwardingRules: [ForwardingRule]?
+    /// Asks for Touch ID or the Mac password before every connection that uses a saved password or key, unless the
+    /// password vault is unlocked. A new session starts with it on; sessions saved before it existed keep it off.
+    public var confirmsEachConnection: Bool?
+    var asksEachConnection: Bool { confirmsEachConnection == true }
+    public init(host: String, port: Int = 22, username: String, proxyHost: String? = nil, proxyPort: Int? = nil, identityPath: String? = nil, opensFiles: Bool = false, jumpSessionID: UUID? = nil,
+                usesAgent: Bool = false, agentSocket: String? = nil, proxyKind: ProxyKind = .socks5,
+                confirmsEachConnection: Bool = false) {
         self.host = host; self.port = port; self.username = username
         self.proxyHost = proxyHost; self.proxyPort = proxyPort; self.identityPath = identityPath
         self.opensFiles = opensFiles ? true : nil
         self.jumpSessionID = jumpSessionID
+        self.usesAgent = usesAgent ? true : nil
+        self.agentSocket = usesAgent ? agentSocket : nil
+        self.proxyKind = proxyHost == nil || proxyKind == .socks5 || proxyKind == .none ? nil : proxyKind
+        self.confirmsEachConnection = confirmsEachConnection ? true : nil
     }
+    /// The proxy this connection dials, or `.direct`.
+    var proxy: ProxyConfiguration {
+        guard let proxyHost, let proxyPort else { return .direct }
+        return ProxyConfiguration(kind: proxyKind ?? .socks5, host: proxyHost, port: proxyPort)
+    }
+    /// Signs in with keys only: an identity file, the SSH agent, or both.
+    var usesKeys: Bool { identityPath != nil || usesAgent == true }
     func validate() throws {
+        if let forwardingRules { try ForwardingRule.validateSaved(forwardingRules) }
         if jumpSessionID != nil && proxyHost != nil {
-            throw WorkspaceError.invalid("Set SOCKS5 on the jump host rather than on the destination.")
+            throw WorkspaceError.invalid("Set the proxy on the jump host rather than on the destination.")
         }
         guard !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !username.isEmpty,
               (1...65535).contains(port), (proxyHost == nil) == (proxyPort == nil),
               proxyPort.map({ (1...65535).contains($0) }) ?? true,
               proxyHost.map({ !$0.isEmpty }) ?? true,
-              identityPath.map({ $0.hasPrefix("/") && !$0.contains("\0") }) ?? true else { throw WorkspaceError.invalid("Invalid saved connection settings.") }
+              identityPath.map({ $0.hasPrefix("/") && !$0.contains("\0") }) ?? true,
+              agentSocket.map({ $0.hasPrefix("/") && !$0.contains("\0") }) ?? true else { throw WorkspaceError.invalid("Invalid saved connection settings.") }
     }
 }
 
@@ -61,9 +88,41 @@ public struct SessionTreeNode: Codable, Identifiable, Equatable {
         } else { nodes = [] }
     }
     public func node(_ id: UUID?) -> SessionTreeNode? { nodes.first { $0.id == id } }
+    /// The longest jump chain a session may use: up to this many hosts before the destination.
+    nonisolated static let maximumJumpHops = 8
+
+    /// Saved sessions that can serve as a jump host for `id`: anything whose own chain is valid and never passes
+    /// back through `id`.
     func jumpCandidates(excluding id: UUID?) -> [SessionTreeNode] {
-        nodes.filter { $0.id != id && $0.connection != nil && $0.connection?.jumpSessionID == nil }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let indexed = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
+        return nodes.filter { node in
+            guard node.id != id, node.connection != nil, let chain = Self.jumpChain(from: node.id, in: indexed) else { return false }
+            return !chain.contains { $0.id == id } && chain.count < Self.maximumJumpHops
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// The jump hosts a connection passes through, first hop (the one MShell dials) first.
+    /// Returns nil when a link is missing, loops, or exceeds the limit.
+    func jumpChain(for connection: SavedConnection, excluding id: UUID?) -> [SavedConnection]? {
+        var indexed = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
+        let start = id ?? UUID()
+        indexed[start] = SessionTreeNode(id: start, name: "_", connection: connection)
+        return Self.jumpChain(from: start, in: indexed)?.compactMap(\.connection)
+    }
+
+    /// Hosts reached before `id`, ordered from the first hop to the last. The node itself is not included.
+    static func jumpChain(from id: UUID, in indexed: [UUID: SessionTreeNode]) -> [SessionTreeNode]? {
+        var chain: [SessionTreeNode] = []
+        var seen: Set<UUID> = [id]
+        var next = indexed[id]?.connection?.jumpSessionID
+        while let current = next {
+            guard seen.insert(current).inserted, chain.count < maximumJumpHops,
+                  let node = indexed[current], node.connection != nil else { return nil }
+            chain.append(node)
+            next = node.connection?.jumpSessionID
+        }
+        return chain.reversed()
     }
 
     public func children(of parent: UUID?) -> [SessionTreeNode] {
@@ -102,9 +161,9 @@ public struct SessionTreeNode: Codable, Identifiable, Equatable {
             let key = (node.parent?.uuidString ?? "root") + "/" + nameKey(name)
             guard names.insert(key).inserted else { throw WorkspaceError.invalid("An item with that name already exists here.") }
             try node.connection?.validate()
-            if let jumpID = node.connection?.jumpSessionID {
-                guard jumpID != node.id, indexed[jumpID]?.connection?.jumpSessionID == nil else {
-                    throw WorkspaceError.invalid("Choose a jump host that does not use another jump host.")
+            if node.connection?.jumpSessionID != nil {
+                guard jumpChain(from: node.id, in: indexed) != nil else {
+                    throw WorkspaceError.invalid("Jump hosts must not loop and can chain at most 8 hosts.")
                 }
             }
             var parent = node.parent, visited: Set<UUID> = [node.id]
@@ -146,6 +205,7 @@ public struct SessionTreeNode: Codable, Identifiable, Equatable {
         updated.append(root)
         var folders: [[String]: UUID] = [:]
         var names: [UUID: Set<String>] = [:]
+        var imported: [[String]: UUID] = [:]
         @discardableResult func append(_ name: String, to parent: UUID, connection: SavedConnection? = nil) -> UUID {
             let safeName = Self.importName(name)
             var candidate = safeName
@@ -166,7 +226,12 @@ public struct SessionTreeNode: Codable, Identifiable, Equatable {
         }
         for entry in draft.entries {
             let folder = folders[Array(entry.components.dropLast())] ?? root.id
-            append(entry.name, to: folder, connection: entry.connection)
+            imported[entry.components] = append(entry.name, to: folder, connection: entry.connection)
+        }
+        for entry in draft.entries {
+            guard let jump = entry.jump, let target = imported[jump], let id = imported[entry.components],
+                  let index = updated.firstIndex(where: { $0.id == id }) else { continue }
+            updated[index].connection?.jumpSessionID = target
         }
         try commit(updated)
         selection = root.id

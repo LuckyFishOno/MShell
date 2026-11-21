@@ -13,6 +13,8 @@ let package = Package(
         .package(url: "https://github.com/orlandos-nl/Citadel.git", from: "0.12.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.104.0"),
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.35.0"),
+        // RSA (rsa-sha2-256/512) and ECDSA key support for SSH authentication.
+        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.15.1"),
         // Test-only: lets the loopback test host an in-process SSH server. Citadel pulls this same
         // fork transitively; using the same module identity avoids duplicate NIOSSH products.
         .package(url: "https://github.com/Wellz26/swift-nio-ssh.git", from: "0.3.7")
@@ -26,7 +28,7 @@ let package = Package(
         .target(name: "Profiles", dependencies: ["CarveShared", "Formats"], path: "Sources/profiles"),
         .target(name: "Terminal", dependencies: ["CarveShared", "Formats"], path: "Sources/terminal"),
         .target(name: "MasterPassword", dependencies: ["CarveShared", "Profiles"], path: "Sources/master-password"),
-        .target(name: "Ssh", dependencies: [.product(name: "Citadel", package: "Citadel"), "CarveShared", "MasterPassword", "Network", "Profiles", .product(name: "NIOCore", package: "swift-nio"), .product(name: "NIOPosix", package: "swift-nio"), .product(name: "NIOSSH", package: "swift-nio-ssh"), .product(name: "NIOSOCKS", package: "swift-nio-extras")], path: "Sources/ssh"),
+        .target(name: "Ssh", dependencies: [.product(name: "Citadel", package: "Citadel"), "CarveShared", "MasterPassword", "Network", "Profiles", .product(name: "NIOCore", package: "swift-nio"), .product(name: "NIOPosix", package: "swift-nio"), .product(name: "NIOSSH", package: "swift-nio-ssh"), .product(name: "NIOSOCKS", package: "swift-nio-extras"), .product(name: "Crypto", package: "swift-crypto"), .product(name: "_CryptoExtras", package: "swift-crypto")], path: "Sources/ssh"),
         .target(name: "FileTransfer", dependencies: ["CarveShared", "Ssh", .product(name: "NIOCore", package: "swift-nio"), .product(name: "NIOSSH", package: "swift-nio-ssh")], path: "Sources/file-transfer"),
         .target(name: "App", dependencies: ["LocalPTY", "CarveShared", "FileTransfer", "Highlight", "MasterPassword", "Ssh", "Terminal", "Profiles", "Formats", "Network"], path: "Sources/app", resources: [.process("Resources")]),
         .executableTarget(name: "CarveApp", dependencies: ["CarveShared", "Formats", "Network", "Highlight", "Profiles", "Terminal", "MasterPassword", "Ssh", "FileTransfer", "App"], path: "Sources/CarveApp"),
@@ -36,8 +38,8 @@ let package = Package(
         .testTarget(name: "ProfilesTests", dependencies: ["CarveShared", "Profiles"], path: "Tests/profiles"),
         .testTarget(name: "TerminalTests", dependencies: ["CarveShared", "Terminal"], path: "Tests/terminal"),
         .testTarget(name: "MasterPasswordTests", dependencies: ["CarveShared", "MasterPassword"], path: "Tests/master-password"),
-        .testTarget(name: "SshTests", dependencies: ["CarveShared", "Ssh"], path: "Tests/ssh"),
+        .testTarget(name: "SshTests", dependencies: ["CarveShared", "Ssh", "Network", .product(name: "NIOSSH", package: "swift-nio-ssh"), .product(name: "NIOCore", package: "swift-nio"), .product(name: "NIOPosix", package: "swift-nio"), .product(name: "Crypto", package: "swift-crypto"), .product(name: "_CryptoExtras", package: "swift-crypto")], path: "Tests/ssh"),
         .testTarget(name: "FileTransferTests", dependencies: ["CarveShared", "FileTransfer", "Ssh", "Network", "App", .product(name: "NIOEmbedded", package: "swift-nio"), .product(name: "Citadel", package: "Citadel"), .product(name: "NIOSSH", package: "swift-nio-ssh"), .product(name: "NIOCore", package: "swift-nio"), .product(name: "NIOPosix", package: "swift-nio"), .product(name: "NIOSOCKS", package: "swift-nio-extras")], path: "Tests/file-transfer"),
-        .testTarget(name: "AppTests", dependencies: ["CarveShared", "App", "MasterPassword"], path: "Tests/app")
+        .testTarget(name: "AppTests", dependencies: ["CarveShared", "App", "MasterPassword", "Network"], path: "Tests/app")
     ]
 )

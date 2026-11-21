@@ -70,6 +70,8 @@ public final class TerminalScreen {
     public private(set) var applicationCursorKeys: Bool
     public private(set) var bracketedPaste = false
     public private(set) var title = ""
+    /// The shell's current directory as reported with OSC 7 (`file://host/path`), percent-decoded.
+    public private(set) var workingDirectory: String?
     /// Escape or control sequences that were recognized as syntax but not implemented, by name.
     public private(set) var unsupported: [String: Int] = [:]
     public private(set) var events: [TerminalEvent] = []
@@ -216,7 +218,17 @@ public final class TerminalScreen {
         let text = String(decoding: Array(oscText.unicodeScalars.map { UInt8(truncatingIfNeeded: $0.value) }), as: UTF8.self)
         let value = text.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
         if let code = parts.first, code == "0" || code == "2", value.count == 2 { title = String(value[1]); events.append(.title(title)) }
+        else if parts.first == "7", value.count == 2, let path = Self.directory(fromOSC7: String(value[1])) { workingDirectory = path }
         else { count("OSC " + (parts.first.map(String.init) ?? "")) }
+    }
+
+    /// Reads the path from an OSC 7 report such as `file://host/home/me/My%20Files`.
+    static func directory(fromOSC7 value: String) -> String? {
+        guard value.hasPrefix("file://") else { return nil }
+        let rest = value.dropFirst("file://".count)
+        guard let slash = rest.firstIndex(of: "/") else { return nil }
+        let path = String(rest[slash...])
+        return path.removingPercentEncoding ?? path
     }
 
     private func count(_ name: String) { unsupported[name, default: 0] += 1 }

@@ -19,7 +19,7 @@ The [feature backlog](FEATURE-BACKLOG.md) tracks documented workflows from Xshel
 ## File transfers
 
 - [x] **SFTP GUI.** Browse, upload, download, rename, and delete files over an existing SSH connection. Saved profiles can open directly to the file browser.
-- [x] **SFTP layout.** Show the terminal and remote files side by side in the Files workspace.
+- [x] **SFTP layout.** Show remote files beside the terminal in the MobaXterm-style side rail, optionally following the shell's folder.
 - [ ] **SFTP workspace and CLI.** Add optional directory following, Finder drag and drop, folder and batch operations, and remote editing with explicit upload and conflict handling. Provide equivalent file operations through the CLI.
 - [ ] **FTP and FTPS.** Save dedicated profiles and support browsing, upload, download, rename, directory creation, and deletion. Start with passive mode. Support explicit and implicit FTPS with certificate validation and encryption for both connections. Require the user to select plain FTP explicitly. [FTPS modes](https://curl.se/docs/faq.html#FTPS_does_not_work)
 - [ ] **SCP.** Copy files over SSH using the legacy SCP protocol for servers with no SFTP subsystem. Reuse SSH host-key verification and profile authentication. Verify against an SCP-capable fixture with SFTP disabled. Provide CLI and GUI upload and download and an optional profile-level fallback from SFTP. [OpenSSH SCP manual](https://man.openbsd.org/scp)
@@ -28,9 +28,13 @@ The [feature backlog](FEATURE-BACKLOG.md) tracks documented workflows from Xshel
 
 ## SSH and terminal
 
-- [x] Three workspace layouts with a persisted choice and CLI get/set. The top-bar selector was removed to simplify the toolbar.
-- [ ] OpenSSH configuration import, agent support, more key formats, keyboard-interactive authentication, and multi-hop jump hosts. Evaluate certificates and smart cards.
-- [ ] Reverse and dynamic forwarding, saved tunnel rules, and a view for starting and stopping tunnels. Reuse SSH gateways for compatible remote connection types.
+- [x] Three workspace layouts (macOS, Xshell style, MobaXterm style) with a toolbar menu that applies at once, a persisted choice, and CLI get/set.
+- [x] Preview and import OpenSSH configuration with includes, wildcard defaults, agent settings, and jump routes. Support Ed25519, ECDSA, and RSA key files and agent keys, up to eight jump hosts, and SOCKS4/4a/5 and HTTP CONNECT proxies.
+- [x] Start and stop local, reverse, and dynamic forwarding in the app. Save rules in a connection profile and start them after connect.
+- [x] Use Touch ID to reopen the password vault during the same app launch. Create, show, and regenerate an app-managed Secure Enclave SSH key without per-connection Touch ID.
+- [x] Save a password or key passphrase on this Mac after it first signs in, so it connects after a restart without unlocking. Optionally ask for Touch ID or the Mac password on every connection.
+- [ ] Add keyboard-interactive authentication and multi-factor login, including multi-round prompts and public key plus verification code. The current NIOSSH release lacks RFC 4256 support. [Upstream client implementation](https://github.com/apple/swift-nio-ssh/pull/242)
+- [ ] Evaluate SSH certificates, smart cards, and SSH gateways for compatible remote connection types.
 - [ ] Connection recovery after sleep and optional automatic reconnect.
 - [x] Multi-pane workspace: split any pane side by side or stacked without a pane limit, drag dividers, maximize and restore a pane, and type into all panes at once.
 - [ ] Tab duplication and detach/reattach, workspace restoration, and opening session groups together.

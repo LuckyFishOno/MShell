@@ -116,8 +116,10 @@ public struct WorkspaceSplitCommands: Commands {
         CommandGroup(after: .toolbar) {
             Button(T("Split side by side")) { model.splitWorkspace(.sideBySide) }
                 .keyboardShortcut("d", modifiers: .command)
+                .disabled(!model.canSplit(model.selection))
             Button(T("Split top and bottom")) { model.splitWorkspace(.stacked) }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(!model.canSplit(model.selection))
             Button(T(model.maximizedPane == nil ? "Maximize pane" : "Restore pane")) {
                 if let id = model.maximizedPane ?? model.selection { model.toggleMaximizedPane(id) }
             }

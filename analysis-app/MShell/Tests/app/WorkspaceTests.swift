@@ -9,23 +9,30 @@ import MasterPassword
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: url) }; return url
     }
-    func testWorkspaceLayoutAppliesAfterReopeningAndKeepsTheSavedTheme() throws {
+    /// Panes only split for signed-in sessions; these tests stand in for one without a server.
+    @discardableResult private func connected(_ tab: SessionTab) -> SessionTab { tab.connected = true; return tab }
+    func testWorkspaceLayoutAppliesAtOnceSurvivesReopeningAndKeepsTheSavedTheme() throws {
         let storage = try directory()
         let model = try WorkspaceModel(storage: storage)
         let theme = try XCTUnwrap(model.themes.first { $0.id != model.themeID }).id
         try model.selectTheme(theme)
         XCTAssertEqual(model.layout, .native)
-        XCTAssertEqual(model.preferredLayout, .native)
 
         for layout in [WorkspaceLayout.terminal, .transfer, .native] {
             try model.selectLayout(layout)
-            XCTAssertEqual(model.preferredLayout, layout)
-            XCTAssertEqual(model.layout, .native)
+            XCTAssertEqual(model.layout, layout)
             let reopened = try WorkspaceModel(storage: storage)
             XCTAssertEqual(reopened.layout, layout)
-            XCTAssertEqual(reopened.preferredLayout, layout)
             XCTAssertEqual(reopened.themeID, theme)
         }
+    }
+
+    func testLayoutNamesAcceptTheProductStyleAliases() {
+        XCTAssertEqual(WorkspaceLayout(argument: "xshell"), .terminal)
+        XCTAssertEqual(WorkspaceLayout(argument: "MobaXterm"), .transfer)
+        XCTAssertEqual(WorkspaceLayout(argument: "macos"), .native)
+        XCTAssertEqual(WorkspaceLayout(argument: "terminal"), .terminal)
+        XCTAssertNil(WorkspaceLayout(argument: "windows"))
     }
     func testSplitKeepsIndependentLocalTerminalsAndRestoresSurvivingTab() async throws {
         let model = try WorkspaceModel(storage: directory())
@@ -71,6 +78,26 @@ import MasterPassword
         XCTAssertTrue(model.selected?.terminalReady == true)
         await model.closeAll()
     }
+    func testOnlyConnectedOrLocalTabsCanBeSplit() async throws {
+        let model = try WorkspaceModel(storage: directory())
+        model.tabs.removeAll()
+        let local = model.addLocalTab()
+        let remote = model.addTab()
+        XCTAssertFalse(model.canSplit(remote.id), "A tab still showing its sign-in form cannot be split.")
+        model.splitWorkspace(.sideBySide)
+        XCTAssertNil(model.split)
+        XCTAssertTrue(model.groups.isEmpty)
+
+        model.placeTab(remote.id, at: .right, of: local.id)
+        model.placeTab(local.id, at: .right, of: remote.id)
+        XCTAssertTrue(model.groups.isEmpty, "Dragging a disconnected tab, or onto one, does not split.")
+
+        model.selectTab(local.id)
+        model.splitWorkspace(.sideBySide)
+        let split = try XCTUnwrap(model.split)
+        XCTAssertFalse(split.tabIDs.contains(remote.id), "Splitting opens a local terminal rather than the sign-in form.")
+        await model.closeAll()
+    }
     func testPaneTreeSplitsReplacesAndCollapsesWithoutAPaneLimit() {
         let ids = (0..<6).map { _ in UUID() }
         var split = WorkspaceSplit(axis: .stacked, first: ids[0], second: ids[1])
@@ -98,7 +125,7 @@ import MasterPassword
     func testDraggingTabsOntoPaneEdgesSplitsMovesAndSwaps() throws {
         let model = try WorkspaceModel(storage: directory())
         model.tabs.removeAll()
-        let a = model.addTab().id, b = model.addTab(select: false).id, c = model.addTab(select: false).id
+        let a = connected(model.addTab()).id, b = connected(model.addTab(select: false)).id, c = connected(model.addTab(select: false)).id
         model.selectTab(a)
 
         model.placeTab(b, at: .left, of: a)
@@ -117,7 +144,7 @@ import MasterPassword
         model.placeTab(c, at: .right, of: c)
         XCTAssertEqual(model.split?.tabIDs, [c, b, a])
 
-        let d = model.addTab(select: false).id
+        let d = connected(model.addTab(select: false)).id
         model.placeTab(d, at: .center, of: b)
         XCTAssertEqual(model.split?.tabIDs, [c, d, a])
     }
@@ -186,7 +213,8 @@ import MasterPassword
     func testSplitGroupsAreSeparateTabsAndPanesDetachBackIntoTabs() throws {
         let model = try WorkspaceModel(storage: directory())
         model.tabs.removeAll()
-        let a = model.addTab().id, b = model.addTab(select: false).id, c = model.addTab(select: false).id, d = model.addTab(select: false).id
+        let a = connected(model.addTab()).id, b = connected(model.addTab(select: false)).id
+        let c = connected(model.addTab(select: false)).id, d = connected(model.addTab(select: false)).id
         model.placeTab(b, at: .bottom, of: a)
         model.placeTab(d, at: .right, of: c)
         XCTAssertEqual(model.groups.map(\.tabIDs), [[a, b], [c, d]])
@@ -216,7 +244,7 @@ import MasterPassword
     func testDisconnectClosesTheSessionAndItsPane() async throws {
         let model = try WorkspaceModel(storage: directory())
         model.tabs.removeAll()
-        let a = model.addTab(), b = model.addTab(select: false), c = model.addTab(select: false)
+        let a = connected(model.addTab()), b = connected(model.addTab(select: false)), c = connected(model.addTab(select: false))
         model.selectTab(a.id)
         model.placeTab(b.id, at: .right, of: a.id)
         model.placeTab(c.id, at: .bottom, of: b.id)

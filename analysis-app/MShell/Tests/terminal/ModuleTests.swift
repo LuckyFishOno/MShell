@@ -80,6 +80,14 @@ final class TerminalScreenTests: XCTestCase {
         XCTAssertEqual(wrap.lines, ["ab", "中"], "a wide char that does not fit wraps")
     }
 
+    func testOSC7ReportsTheShellFolder() {
+        let s = screen(2, 10, "\u{1B}]7;file://web01/home/me/My%20Site\u{07}\u{1B}]7;file://web01/srv/app\u{1B}\\")
+        XCTAssertEqual(s.workingDirectory, "/srv/app")
+        XCTAssertNil(s.unsupported["OSC 7"])
+        XCTAssertEqual(TerminalScreen.directory(fromOSC7: "file://web01/home/me/My%20Site"), "/home/me/My Site")
+        XCTAssertNil(TerminalScreen.directory(fromOSC7: "http://web01/x"))
+    }
+
     func testOSCTitleBellRepliesAndUnsupported() {
         let s = screen(2, 10, "\u{1B}]0;my host\u{07}\u{07}\u{1B}[6n\u{1B}[?9999h\u{1B}Z")
         XCTAssertEqual(s.title, "my host")

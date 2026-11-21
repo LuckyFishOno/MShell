@@ -5,7 +5,11 @@ import NIOSSH
 public final class SSHInteractiveShell: @unchecked Sendable {
     public let output: AsyncThrowingStream<[UInt8], Error>
     private let channel: Channel
-    init(channel: Channel, output: AsyncThrowingStream<[UInt8], Error>) { self.channel = channel; self.output = output }
+    private let exit: ShellExit
+    init(channel: Channel, output: AsyncThrowingStream<[UInt8], Error>, exit: ShellExit) { self.channel = channel; self.output = output; self.exit = exit }
+    /// Set once the server reports how the shell ended (`exit`, `logout`, a signal). It stays nil when the
+    /// channel closed without one, such as a dropped connection.
+    public var exitStatus: Int? { exit.status }
     public func send(_ bytes: [UInt8]) async throws {
         guard !bytes.isEmpty, bytes.count <= 262144 else { if bytes.isEmpty { return }; throw SSHError.invalidSettings("Terminal input exceeds 256 KiB.") }
         try await channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: bytes)))).get()
@@ -17,6 +21,14 @@ public final class SSHInteractiveShell: @unchecked Sendable {
     public func close() async { try? await channel.close().get() }
 }
 
+/// Written on the event loop before the output stream finishes, read by the consumer afterwards.
+final class ShellExit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int?
+    var status: Int? { lock.withLock { value } }
+    func record(_ status: Int) { lock.withLock { if value == nil { value = status } } }
+}
+
 final class InteractiveShellHandler: ChannelInboundHandler {
     typealias InboundIn = SSHChannelData
     private let ready: EventLoopPromise<Void>
@@ -24,6 +36,7 @@ final class InteractiveShellHandler: ChannelInboundHandler {
     private let rows: Int, columns: Int
     private var stage = 0
     private var finished = false
+    let exit = ShellExit()
     init(ready: EventLoopPromise<Void>, continuation: AsyncThrowingStream<[UInt8], Error>.Continuation, rows: Int, columns: Int) {
         self.ready = ready; self.continuation = continuation; self.rows = rows; self.columns = columns
     }
@@ -39,6 +52,10 @@ final class InteractiveShellHandler: ChannelInboundHandler {
                 stage = 2
                 context.triggerUserOutboundEvent(SSHChannelRequestEvent.ShellRequest(wantReply: true)).whenFailure { error in self.fail(error); context.close(promise: nil) }
             } else if stage == 2 { stage = 3; ready.succeed(()) }
+        } else if let status = event as? SSHChannelRequestEvent.ExitStatus {
+            exit.record(status.exitStatus)
+        } else if event is SSHChannelRequestEvent.ExitSignal {
+            exit.record(128)
         } else if event is ChannelFailureEvent {
             fail(SSHError.commandFailed(stage == 1 ? "Server rejected PTY request." : "Server rejected shell request.")); context.close(promise: nil)
         } else { context.fireUserInboundEventTriggered(event) }
@@ -85,6 +102,6 @@ extension SSHSession {
         defer { deadline.cancel() }
         do { try await ready.futureResult.get() }
         catch { try? await child.close().get(); throw error }
-        return SSHInteractiveShell(channel: child, output: pair.stream)
+        return SSHInteractiveShell(channel: child, output: pair.stream, exit: shellHandler.exit)
     }
 }

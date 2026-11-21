@@ -2,7 +2,7 @@ import App
 import Foundation
 
 enum LayoutCommand {
-    private static let usage = "Usage: mshell layout get [--workspace PATH] | mshell layout set <macos|terminal|transfer> [--workspace PATH]"
+    private static let usage = "Usage: mshell layout get [--workspace PATH] | mshell layout set <macos|xshell|mobaxterm> [--workspace PATH]"
 
     static func run(_ arguments: [String]) -> Int32 {
         var args = Array(arguments.dropFirst())
@@ -17,7 +17,7 @@ enum LayoutCommand {
                 print(try WorkspaceLayout.load(from: storage).rawValue)
                 return 0
             }
-            if args.count == 2, args.first == "set", let layout = WorkspaceLayout(rawValue: args[1]) {
+            if args.count == 2, args.first == "set", let layout = WorkspaceLayout(argument: args[1]) {
                 try layout.save(to: storage)
                 print(layout.rawValue)
                 return 0

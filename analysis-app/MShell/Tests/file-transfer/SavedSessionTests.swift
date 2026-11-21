@@ -49,6 +49,36 @@ import AppKit
             await model.closeAll()
         }
     }
+    func testLoggingOutOfTheRemoteShellClosesTheTabButAChannelDropKeepsIt() async throws {
+        try await OpenSSHFixture.withServer(interactive: true) { port, _ in
+            let (model, _) = try self.workspace()
+            var trusted = false
+            @MainActor func open() async throws -> SessionTab {
+                let tab = model.addTab()
+                tab.host = "127.0.0.1"; tab.port = String(port); tab.username = "carve"; tab.password = "secret"
+                let login = Task { await model.connect(tab) }
+                if !trusted { try await self.approve(model, tab: tab); trusted = true }
+                await login.value
+                await model.startTerminal(tab)
+                XCTAssertTrue(tab.terminalReady)
+                return tab
+            }
+            let dropped = try await open()
+            model.sendTerminal(dropped, bytes: Array("drop\r".utf8))
+            for _ in 0..<300 where dropped.terminalReady { try await Task.sleep(nanoseconds: 10_000_000) }
+            XCTAssertFalse(dropped.terminalReady)
+            XCTAssertTrue(model.tabs.contains { $0.id == dropped.id }, "A shell that ends without an exit status keeps its tab")
+
+            let loggedOut = try await open()
+            model.sendTerminal(loggedOut, bytes: Array("exit\r".utf8))
+            for _ in 0..<300 where model.tabs.contains(where: { $0.id == loggedOut.id }) {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            XCTAssertFalse(model.tabs.contains { $0.id == loggedOut.id }, "exit closes the tab")
+            XCTAssertFalse(loggedOut.connected)
+            await model.closeAll()
+        }
+    }
     func testReloadedSavedSessionUsesUnlockedEncryptedVaultWithoutPasswordForm() async throws {
         try await OpenSSHFixture.withServer(interactive: true) { port, _ in
             let (initial, root) = try self.workspace(), item = try self.saved(initial, port: port)

@@ -33,8 +33,10 @@ enum UIStrings {
     static func text(_ key: String, language: AppLanguage) -> String {
         let locale = language.resolved()
         if let translated = table[key]?[locale] { return translated }
-        for prefix in ["Connection failed: ", "Command failed: ", "Invalid connection settings: "] {
-            if key.hasPrefix(prefix), let translated = table[prefix]?[locale] { return translated + key.dropFirst(prefix.count) }
+        for prefix in ["Connection failed: ", "Command failed: ", "Invalid connection settings: ", "The HTTP proxy refused the connection: "] {
+            if key.hasPrefix(prefix), let translated = table[prefix]?[locale] {
+                return translated + text(String(key.dropFirst(prefix.count)), language: language)
+            }
         }
         return key
     }
